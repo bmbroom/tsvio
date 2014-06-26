@@ -1,17 +1,15 @@
 Package: tsvio
 Title: tsvio: Simple Utilities for TSV files
-Version: 0.0.1
-Date: 2013-01-14
+Version: 0.0.2
+Date: 2013-05-23
 Author: Bradley Broom
-    <http://bioinformatics.mdanderson.org/people/Bradley.Broom/index.html>
 Maintainer: Bradley Broom <bmbroom@mdanderson.org>
 OS_type: unix
-Depends:
-    R (>= 2.14.0)
+Depends: R (>= 2.14.0)
 Description: This package provides simple functions for processing data files in
     tab-separated value (TSV) format.
 License: GPL (>= 3)
-URL: NA
+Copyright: file COPYRIGHTS
+URL: http://bioinformatics.mdanderson.org/people/Bradley.Broom/
+NeedsCompilation: yes
 LazyLoad: Yes
-Collate:
-    'interface.R'

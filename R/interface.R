@@ -51,5 +51,35 @@ tsvGenIndex <- function (filename, indexfile) {
 #'
 #' @seealso tsvGenIndex
 tsvGetLines <- function (filename, indexfile, patterns, findany=TRUE) {
-    return (.Call  ("tsvGetLines", filename, indexfile, patterns, findany));
+    .Call("tsvGetLines", filename, indexfile, patterns, findany)
+}
+
+#' Read matching lines from a tsv file, using a pre-computed index file.
+#'
+#' This function reads lines that match the given patterns from a TSV file with the assistance of
+#' a pre-computed index file to the start of each row.
+#'
+#' The index file must have been created by tsvGenIndex and the data file must not have changed
+#' since the index file was created.
+#'
+#' @param filename The name (and path) of the file containing the data to index.
+#'
+#' @param indexfile The name (and path) of the file to which the index will be written.
+#'
+#' @param rowpatterns A vector of strings containing the string to match against the index entries.  Only
+#' lines with keys that exactly match at least one pattern string are returned.
+#' @param colpatterns A vector of strings to match against the column headers in the first row
+#'
+#' @param findany If false, all patterns must be matched. If true (default) at least one pattern must match.
+#'
+#' @return A matrix containing one row for each matched line and one column for each matched column.
+#'
+#' @export
+#'
+#' @examples
+#' tab <- tsvGetData ("data.tsv", "index.tsv", c("pattern1", "pattern2"), c('cpat1'))
+#'
+#' @seealso tsvGenIndex
+tsvGetData <- function (filename, indexfile, rowpatterns, colpatterns, findany=TRUE) {
+    .Call("tsvGetData", filename, indexfile, rowpatterns, colpatterns, findany)
 }

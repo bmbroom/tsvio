@@ -1,15 +1,12 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <unistd.h>
-#include <errno.h>
-#include <string.h>
 
 #include "tsvio.h"
 
 enum status
 generate_index (FILE *ip, FILE *op)
 {
-	long	position = 0;	/* Number of bytes read. */
+	long	position = 0L;	/* Number of bytes read. */
 	int	ch;		/* Current input byte. */
 
 	/* Skip header line. */
@@ -19,7 +16,7 @@ generate_index (FILE *ip, FILE *op)
 	        break;
 	}
 	if (ch == EOF) {
-	    return position == 0 ? EMPTY_FILE : INCOMPLETE_LAST_LINE;
+	    return position == 0L ? EMPTY_FILE : INCOMPLETE_LAST_LINE;
 	}
 
 	/* Assert: ip is positioned just before either EOF or an input line. */
