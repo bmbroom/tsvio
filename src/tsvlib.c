@@ -63,6 +63,23 @@ add_score_names (SEXP orig, SEXP mat)
     return mat;
 }
 
+void
+report_genindex_errors (enum status res, char *name, SEXP dataFile, SEXP indexFile)
+{
+    if (res == EMPTY_FILE)
+	warning ("%s: Warning: tsvfile '%s' is empty\n", name, CHAR(STRING_ELT(dataFile,0)));
+    else if (res != OK) {
+	if (res == WRITE_ERROR)
+	    error ("%s: error writing to indexfile '%s'\n", name, CHAR(STRING_ELT(indexFile,0)));
+	else if (res == INCOMPLETE_LAST_LINE)
+	    error ("%s: last line of tsvfile '%s' is incomplete\n", name, CHAR(STRING_ELT(dataFile,0)));
+	else if (res == NO_LABEL_ERROR)
+	    error ("%s: line of tsvfile '%s' does not contain a label\n", name, CHAR(STRING_ELT(dataFile,0)));
+	else
+	    error ("%s: unknown internal error\n", name);
+    }
+}
+
 SEXP
 tsvGenIndex (SEXP dataFile, SEXP indexFile)
 {
@@ -88,18 +105,7 @@ tsvGenIndex (SEXP dataFile, SEXP indexFile)
     res = generate_index (tsvp, indexp);
     fclose (tsvp);
     fclose (indexp);
-    if (res == EMPTY_FILE)
-	warning ("tsvGenIndex: Warning: tsvfile '%s' is empty\n", CHAR(STRING_ELT(dataFile,0)));
-    else if (res != OK) {
-	if (res == WRITE_ERROR)
-	    error ("tsvGenIndex: error writing to indexfile '%s'\n", CHAR(STRING_ELT(indexFile,0)));
-	else if (res == INCOMPLETE_LAST_LINE)
-	    error ("tsvGenIndex: last line of tsvfile '%s' is incomplete\n", CHAR(STRING_ELT(dataFile,0)));
-	else if (res == NO_LABEL_ERROR)
-	    error ("tsvGenIndex: line of tsvfile '%s' does not contain a label\n", CHAR(STRING_ELT(dataFile,0)));
-	else
-	    error ("tsvGenIndex: unknown internal error\n");
-    }
+    report_genindex_errors (res, "tsvGenIndex", dataFile, indexFile);
     UNPROTECT (2);
     return R_NilValue;
 }
@@ -109,6 +115,9 @@ get_tsv_line_buffer (char *buffer, size_t bufsize, FILE *tsvp, long posn)
 {
     int	ch, len;
 
+#ifdef DEBUG
+    Rprintf ("> get_tsv_line_buffer (posn=%ld)\n", posn);
+#endif
     if (fseek (tsvp, posn, SEEK_SET) < 0)
 	error ("get_tsv_line: error seeking to line starting at %ld\n", posn);
 
@@ -125,6 +134,9 @@ get_tsv_line_buffer (char *buffer, size_t bufsize, FILE *tsvp, long posn)
     }
 	
     buffer[len++] = '\n'; /* Check above ensures space for this. */
+#ifdef DEBUG
+    Rprintf ("< get_tsv_line_buffer (len=%d)\n", len);
+#endif
     return len;
 }
 
@@ -243,11 +255,11 @@ tsvGetLines (SEXP dataFile, SEXP indexFile, SEXP patterns, SEXP findany)
 /* R matrix is laid out in column-major order.
  */
 void
-get_tsv_fields (SEXP strvec, long nrows, long rowid, FILE *tsvp, long rowposn, long maxFieldWanted, long *fieldWanted)
+get_tsv_fields (char *buffer, long buffer_size, long headercols, SEXP strvec, long nrows, long rowid, FILE *tsvp, long rowposn, long maxFieldWanted, long *fieldWanted)
 {
     long len;
-    long buflen;
-    char buffer[1024*1024];
+    long linelen;
+    long linecols;
     long indexp;
     long fstart;
     SEXP element;
@@ -255,17 +267,34 @@ get_tsv_fields (SEXP strvec, long nrows, long rowid, FILE *tsvp, long rowposn, l
 
 
     /* Read line into buffer. */
-    buflen = get_tsv_line_buffer (buffer, sizeof(buffer), tsvp, rowposn);
+    linelen = get_tsv_line_buffer (buffer, buffer_size, tsvp, rowposn);
+    linecols = num_columns (buffer, linelen);
+
+    /* Validate number of columns and accommodate 'R-style' tsv files with one less header column. */
+    if (headercols == linecols) {
+        /* first header field is not a column label, so one less column header. */
+	/* But first check we didn't match that first label. */
+	if (fieldWanted[0] >= 0) {
+	    error ("tsvGetData: for row %ld: number of columns (%ld) equals number of header columns, but first column header has matched a column pattern\n", rowid, linecols);
+	}
+	/* advance over unwanted field. */
+	fieldWanted++;
+	maxFieldWanted--;
+    } else if (headercols == (linecols-1)) {
+        /* No need to adjust fieldWanted. */
+    } else {
+        error ("tsvGetData: for row %ld: number of columns (%ld) does not match number of header columns (%ld)\n", rowid, linecols, headercols);
+    }
 
     infield = 0;
     indexp = 0;
     /* Assert: infield fields in the buffer have been processed. */
     /* Assert: indexp is positioned at start of a field or immediately following buffer contents. */
-    while ((infield <= maxFieldWanted) && (indexp < buflen)) {
+    while ((infield <= maxFieldWanted) && (indexp < linelen)) {
 
 	/* Read field. */
 	fstart = indexp;
-	while ((indexp < buflen) && buffer[indexp] != '\t' && buffer[indexp] != '\n') {
+	while ((indexp < linelen) && buffer[indexp] != '\t' && buffer[indexp] != '\n') {
 	    indexp++;
 	}
 
@@ -278,10 +307,11 @@ get_tsv_fields (SEXP strvec, long nrows, long rowid, FILE *tsvp, long rowposn, l
 	    }
 	}
 
-	if (indexp < buflen) indexp++; /* Advance over field-terminator, if any. */
+	if (indexp < linelen) indexp++; /* Advance over field-terminator, if any. */
 	infield++;
     }
 }
+
 SEXP
 tsvGetData (SEXP dataFile, SEXP indexFile, SEXP rowpatterns, SEXP colpatterns, SEXP findany)
 {
@@ -296,6 +326,9 @@ tsvGetData (SEXP dataFile, SEXP indexFile, SEXP rowpatterns, SEXP colpatterns, S
     enum status res;
     long maxColWanted;
     long *wantedFields;
+    char buffer[1024*1024];
+    long tsvheaderlen;	   /* Number of bytes in tsv header line. */
+    long tsvheadercols;    /* Number of columns in tsv header line. */
     
 #ifdef DEBUG
     Rprintf ("> tsvGetData\n");
@@ -313,9 +346,27 @@ tsvGetData (SEXP dataFile, SEXP indexFile, SEXP rowpatterns, SEXP colpatterns, S
         error ("tsvGetData: parameter cannot be NULL\n");
     }
 
+    tsvp = fopen (CHAR(STRING_ELT(dataFile,0)), "rb");
+    if (tsvp == NULL) {
+	error ("tsvGetData: unable to open datafile '%s' for reading\n", CHAR(STRING_ELT(dataFile,0)));
+    }
+
     indexp = fopen (CHAR(STRING_ELT(indexFile,0)), "rb");
     if (indexp == NULL) {
-        error ("tsvGetData: unable to open indexfile '%s' for reading\n", CHAR(STRING_ELT(indexFile,0)));
+	warning ("tsvGetData: Warning: unable to read index file '%s': attempting to create\n", CHAR(STRING_ELT(indexFile,0)));
+	indexp = fopen (CHAR(STRING_ELT(indexFile,0)), "wb+");
+	if (indexp == NULL) {
+	    fclose (tsvp);
+	    error ("tsvGetData: unable to open indexfile '%s' for writing\n", CHAR(STRING_ELT(indexFile,0)));
+	}
+	res = generate_index (tsvp, indexp);
+	if ((res != EMPTY_FILE) && (res != OK)) {
+	    fclose (tsvp);
+	    fclose (indexp);
+	}
+	report_genindex_errors (res, "tsvGetData", dataFile, indexFile);
+	rewind (tsvp);
+	rewind (indexp);
     }
 
     NrowPattern = length(rowpatterns);
@@ -326,11 +377,13 @@ tsvGetData (SEXP dataFile, SEXP indexFile, SEXP rowpatterns, SEXP colpatterns, S
 
     rowposns = (long *)R_alloc (NrowPattern, sizeof(long));
     if (rowposns == NULL) {
+	fclose (tsvp);
 	fclose (indexp);
         error ("tsgGetData: ERROR: unable to allocate working memory: rowposns\n");
     }
     rowpats = (const char **)R_alloc (NrowPattern, sizeof(char *));
     if (rowpats == NULL) {
+	fclose (tsvp);
 	fclose (indexp);
         error ("tsgGetData: ERROR: unable to allocate working memory: rowpats\n");
     }
@@ -346,6 +399,7 @@ tsvGetData (SEXP dataFile, SEXP indexFile, SEXP rowpatterns, SEXP colpatterns, S
 	Rprintf ("  tsvGetData: error finding row matches\n");
 	results = R_NilValue;
 #endif
+	fclose (tsvp);
 	error ("tsvGetData: row match not found");
     }
     NrowResult = 0;
@@ -357,11 +411,6 @@ tsvGetData (SEXP dataFile, SEXP indexFile, SEXP rowpatterns, SEXP colpatterns, S
 #ifdef DEBUG
     Rprintf ("  tsvGetData: found %d row matches\n", NrowResult);
 #endif
-    tsvp = fopen (CHAR(STRING_ELT(dataFile,0)), "rb");
-    if (tsvp == NULL) {
-	error ("tsvGetData: unable to open datafile '%s' for reading\n", CHAR(STRING_ELT(dataFile,0)));
-    }
-
     colposns = (long *)R_alloc (NcolPattern, sizeof(long));
     if (colposns == NULL) {
 	fclose (tsvp);
@@ -375,7 +424,16 @@ tsvGetData (SEXP dataFile, SEXP indexFile, SEXP rowpatterns, SEXP colpatterns, S
     for (ii = 0; ii < NcolPattern; ii++) {
 	colpats[ii] = CHAR(STRING_ELT(colpatterns,ii));
     }
-    res = find_col_indices (tsvp, LOGICAL(findany)[0], NcolPattern, colpats, colposns, warn);
+
+    /* Read TSV file header line. */
+    tsvheaderlen = get_tsv_line_buffer (buffer, sizeof(buffer), tsvp, 0L);
+    tsvheadercols = num_columns (buffer, tsvheaderlen);
+#ifdef DEBUG
+    buffer[tsvheaderlen] = '\0';
+    warn ("Read tsv buffer %ld chars: %s", tsvheaderlen, buffer);
+#endif
+
+    res = find_col_indices (buffer, tsvheaderlen, LOGICAL(findany)[0], NcolPattern, colpats, colposns, warn);
     if (res != OK) {
 #ifdef DEBUG
 	Rprintf ("  tsvGetData: error finding col matches\n");
@@ -426,7 +484,7 @@ tsvGetData (SEXP dataFile, SEXP indexFile, SEXP rowpatterns, SEXP colpatterns, S
     for (ii = 0; ii < NrowPattern; ii++) {
 	if (rowposns[ii] >= 0) {
 	    SET_STRING_ELT (rownames, rowid, STRING_ELT(rowpatterns, ii));
-	    get_tsv_fields (results, NrowResult, rowid++, tsvp, rowposns[ii], maxColWanted, wantedFields);
+	    get_tsv_fields (buffer, sizeof(buffer), tsvheadercols, results, NrowResult, rowid++, tsvp, rowposns[ii], maxColWanted, wantedFields);
 	}
     }
     fclose (tsvp);

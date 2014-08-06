@@ -8,7 +8,7 @@
 #include "tsvio.h"
 
 enum status
-find_indices (FILE *indexp, long findany, long nindex, const char *labels[], long *index, void (*warn)(char *msg,...))
+find_indices (FILE *indexp, long findany, long nindex, const char *labels[], long *index, void (*warn)(char *msg, ...))
 {
 	long	nfound = 0;
 	long	ii;
@@ -78,29 +78,36 @@ find_indices (FILE *indexp, long findany, long nindex, const char *labels[], lon
 	return OK;
 }
 
+/* Return the number of tab-separated columns in the line buffer.
+ * The number of columns is *defined* to be the number of tabs plus one.
+ * So, an empty line has 1 column (the empty string).
+ */
+long
+num_columns (char *buffer, long buflen)
+{
+    long n = 1;
+    long ii;
+
+    for (ii = 0; ii < buflen; ii++)
+        if (buffer[ii] == '\t')
+	    n++;
+    return n;
+}
+
 enum status
-find_col_indices (FILE *tsvp, long findany, long nindex, const char *labels[], long *index, void (*warn)(char *msg,...))
+find_col_indices (char *buffer, long buflen, long findany, long nindex, const char *labels[], long *index, void (*warn)(char *msg,...))
 {
 	long	nfound = 0;
 	long	ii;
 	int	ch;
 	char label[1024]; 
 	long len;
-	long buflen;
 	char posn[64]; 
-	char buffer[1024*1024];
 	char *ptr;
 	long indexp = 0;
 	long fstart;
 	long fieldnum;
 
-
-	/* Read header line. */
-	buflen = get_tsv_line_buffer (buffer, sizeof(buffer), tsvp, 0L);
-#ifdef DEBUG
-	buffer[buflen] = '\0';
-	warn ("Read tsv buffer %ld chars: %s", buflen, buffer);
-#endif
 
 	/* Mark all indices as not found. */
 	for (ii = 0; ii < nindex; ii++) index[ii] = -1;
