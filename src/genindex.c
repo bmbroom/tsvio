@@ -45,11 +45,11 @@ generate_index (FILE *ip, FILE *op)
 		    }
 		}
 
-		if (ch == EOF)
-		    return INCOMPLETE_LAST_LINE;
-
 		if (fprintf (op, "\t%ld\n", start) < 0)
 		    return WRITE_ERROR;
+
+		if (ch == EOF)
+		    return INCOMPLETE_LAST_LINE;
 	    }
 	}
 	return OK;

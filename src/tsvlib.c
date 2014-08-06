@@ -63,6 +63,11 @@ add_score_names (SEXP orig, SEXP mat)
     return mat;
 }
 
+is_fatal_error (enum status res)
+{
+    return (res != OK) && (res != EMPTY_FILE) && (res != INCOMPLETE_LAST_LINE);
+}
+
 void
 report_genindex_errors (enum status res, char *name, SEXP dataFile, SEXP indexFile)
 {
@@ -72,7 +77,7 @@ report_genindex_errors (enum status res, char *name, SEXP dataFile, SEXP indexFi
 	if (res == WRITE_ERROR)
 	    error ("%s: error writing to indexfile '%s'\n", name, CHAR(STRING_ELT(indexFile,0)));
 	else if (res == INCOMPLETE_LAST_LINE)
-	    error ("%s: last line of tsvfile '%s' is incomplete\n", name, CHAR(STRING_ELT(dataFile,0)));
+	    warning ("%s: last line of tsvfile '%s' is incomplete\n", name, CHAR(STRING_ELT(dataFile,0)));
 	else if (res == NO_LABEL_ERROR)
 	    error ("%s: line of tsvfile '%s' does not contain a label\n", name, CHAR(STRING_ELT(dataFile,0)));
 	else
@@ -130,7 +135,7 @@ get_tsv_line_buffer (char *buffer, size_t bufsize, FILE *tsvp, long posn)
     }
 
     if (ch == EOF) {
-	error ("get_tsv_line: line starting at %ld is prematurely terminated by EOF\n", posn);
+	warning ("get_tsv_line: line starting at %ld is prematurely terminated by EOF\n", posn);
     }
 	
     buffer[len++] = '\n'; /* Check above ensures space for this. */
@@ -331,7 +336,6 @@ autoColPatterns (FILE *tsvp, long rowposn)
 	linelen = get_tsv_line_buffer (buffer, sizeof(buffer), tsvp, 0L);
 	headercols = num_columns (buffer, linelen);
     }
-    Rprintf  ("headercols: %ld, rowcols: %ld\n", headercols, rowcols);
 
     PROTECT (pats = allocVector(STRSXP, rowcols-1));
     numpats = 0;
@@ -346,7 +350,6 @@ autoColPatterns (FILE *tsvp, long rowposn)
 	    indexp++;
 	}
 
-	Rprintf ("fstart: %ld, indexp: %ld, numpats: %ld\n", fstart, indexp, numpats);
 	/* Insert field into list of patterns if not first non-R-style column header. */
 	if ((fstart > 0) || (rowcols != headercols)) {
 	    element = mkCharLen(buffer+fstart, indexp-fstart);
@@ -355,7 +358,6 @@ autoColPatterns (FILE *tsvp, long rowposn)
 
 	if (indexp < linelen) indexp++; /* Advance over field-terminator, if any. */
     }
-    Rprintf ("indexp: %ld, linelen: %ld, numpats: %ld\n", indexp, linelen, numpats);
     if (numpats != (rowcols-1)) {
         error ("autoColPatterns: program bug detected: number of patterns (%ld) differs from number of data columns (%ld)\n", numpats, rowcols-1);
     }
@@ -413,6 +415,8 @@ tsvGetData (SEXP dataFile, SEXP indexFile, SEXP rowpatterns, SEXP colpatterns, S
     char buffer[1024*1024];
     long tsvheaderlen;	   /* Number of bytes in tsv header line. */
     long tsvheadercols;    /* Number of columns in tsv header line. */
+    char tmpname[] = "/tmp/tsvindex-XXXXXX";
+    int tmpfd;
     
 #ifdef DEBUG
     Rprintf ("> tsvGetData\n");
@@ -440,11 +444,17 @@ tsvGetData (SEXP dataFile, SEXP indexFile, SEXP rowpatterns, SEXP colpatterns, S
 	warning ("tsvGetData: Warning: unable to read index file '%s': attempting to create\n", CHAR(STRING_ELT(indexFile,0)));
 	indexp = fopen (CHAR(STRING_ELT(indexFile,0)), "wb+");
 	if (indexp == NULL) {
-	    fclose (tsvp);
-	    error ("tsvGetData: unable to open indexfile '%s' for writing\n", CHAR(STRING_ELT(indexFile,0)));
+	    warning ("tsvGetData: unable to create indexfile '%s': try to create a temp file\n", CHAR(STRING_ELT(indexFile,0)));
+	    tmpfd = mkstemp (tmpname);
+	    if (tmpfd < 0) {
+		fclose (tsvp);
+		error ("tsvGetData: unable to create even a temporary indexfile\n");
+	    }
+	    indexp = fdopen (tmpfd, "wb+");
+	    unlink (tmpname);
 	}
 	res = generate_index (tsvp, indexp);
-	if ((res != EMPTY_FILE) && (res != OK)) {
+	if (is_fatal_error (res)) {
 	    fclose (tsvp);
 	    fclose (indexp);
 	}
