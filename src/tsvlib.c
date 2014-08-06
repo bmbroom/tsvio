@@ -364,6 +364,39 @@ autoColPatterns (FILE *tsvp, long rowposn)
 }
 
 SEXP
+autoRowPatterns (FILE *indexfile)
+{
+    char buffer[1024*1024];
+    long linelen, numpats, indexp;
+    SEXP element, pats;
+
+    /* Count number of row index entries, allocate vector. */
+    rewind (indexfile);
+    numpats = 0;
+    while (fgets (buffer, sizeof(buffer), indexfile)) {
+        numpats++;
+    }
+    PROTECT (pats = allocVector(STRSXP, numpats));
+
+    /* Read each row label and assign to list of patterns. */
+    rewind (indexfile);
+    numpats = 0;
+    while (fgets (buffer, sizeof(buffer), indexfile)) {
+	linelen = strlen (buffer);
+	indexp = 0;
+	while ((indexp < linelen) && buffer[indexp] != '\t' && buffer[indexp] != '\n') {
+	    indexp++;
+	}
+	element = mkCharLen(buffer, indexp);
+	SET_STRING_ELT (pats, numpats, element);
+        numpats++;
+    }
+
+    UNPROTECT (1);
+    return pats;
+}
+
+SEXP
 tsvGetData (SEXP dataFile, SEXP indexFile, SEXP rowpatterns, SEXP colpatterns, SEXP findany)
 {
     long nprotect = 0;
@@ -393,7 +426,7 @@ tsvGetData (SEXP dataFile, SEXP indexFile, SEXP rowpatterns, SEXP colpatterns, S
     PROTECT (findany = AS_LOGICAL(findany));
     nprotect += 5;
 
-    if (dataFile == R_NilValue || indexFile == R_NilValue || rowpatterns == R_NilValue) {
+    if (dataFile == R_NilValue || indexFile == R_NilValue) {
         error ("tsvGetData: parameter cannot be NULL\n");
     }
 
@@ -420,7 +453,19 @@ tsvGetData (SEXP dataFile, SEXP indexFile, SEXP rowpatterns, SEXP colpatterns, S
 	rewind (indexp);
     }
 
+    if (length (rowpatterns) == 0) {
+	rowpatterns = autoRowPatterns (indexp);
+	PROTECT (rowpatterns);
+	rewind (indexp);
+	nprotect++;
+    }
+
     NrowPattern = length(rowpatterns);
+    if (NrowPattern == 0) {
+	fclose (tsvp);
+	fclose (indexp);
+        error ("tsvGetData: parameter rowpatterns cannot be empty\n");
+    }
 #ifdef DEBUG
     Rprintf ("  tsvGetData: received %d rowpatterns\n", NrowPattern);
 #endif
