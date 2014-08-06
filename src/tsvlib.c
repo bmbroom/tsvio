@@ -313,6 +313,57 @@ get_tsv_fields (char *buffer, long buffer_size, long headercols, SEXP strvec, lo
 }
 
 SEXP
+autoColPatterns (FILE *tsvp, long rowposn)
+{
+    char buffer[1024*1024];
+    long linelen, headercols, rowcols, numpats;
+    SEXP element, pats;
+    long indexp;
+    long fstart;
+
+    if (rowposn < 0) {
+	linelen = get_tsv_line_buffer (buffer, sizeof(buffer), tsvp, 0L);
+	headercols = num_columns (buffer, linelen);
+	rowcols = headercols + 1; /* Assume R-style. */
+    } else {
+	linelen = get_tsv_line_buffer (buffer, sizeof(buffer), tsvp, rowposn);
+	rowcols = num_columns (buffer, linelen);
+	linelen = get_tsv_line_buffer (buffer, sizeof(buffer), tsvp, 0L);
+	headercols = num_columns (buffer, linelen);
+    }
+    Rprintf  ("headercols: %ld, rowcols: %ld\n", headercols, rowcols);
+
+    PROTECT (pats = allocVector(STRSXP, rowcols-1));
+    numpats = 0;
+    indexp = 0;
+    /* Assert: numpats fields have been copied into pats. */
+    /* Assert: indexp is positioned at start of a field or immediately following buffer contents. */
+    while (indexp < linelen) {
+
+	/* Read field (aka pattern). */
+	fstart = indexp;
+	while ((indexp < linelen) && buffer[indexp] != '\t' && buffer[indexp] != '\n') {
+	    indexp++;
+	}
+
+	Rprintf ("fstart: %ld, indexp: %ld, numpats: %ld\n", fstart, indexp, numpats);
+	/* Insert field into list of patterns if not first non-R-style column header. */
+	if ((fstart > 0) || (rowcols != headercols)) {
+	    element = mkCharLen(buffer+fstart, indexp-fstart);
+	    SET_STRING_ELT (pats, numpats++, element);
+	}
+
+	if (indexp < linelen) indexp++; /* Advance over field-terminator, if any. */
+    }
+    Rprintf ("indexp: %ld, linelen: %ld, numpats: %ld\n", indexp, linelen, numpats);
+    if (numpats != (rowcols-1)) {
+        error ("autoColPatterns: program bug detected: number of patterns (%ld) differs from number of data columns (%ld)\n", numpats, rowcols-1);
+    }
+    UNPROTECT (1);
+    return pats;
+}
+
+SEXP
 tsvGetData (SEXP dataFile, SEXP indexFile, SEXP rowpatterns, SEXP colpatterns, SEXP findany)
 {
     long nprotect = 0;
@@ -342,7 +393,7 @@ tsvGetData (SEXP dataFile, SEXP indexFile, SEXP rowpatterns, SEXP colpatterns, S
     PROTECT (findany = AS_LOGICAL(findany));
     nprotect += 5;
 
-    if (dataFile == R_NilValue || indexFile == R_NilValue || rowpatterns == R_NilValue || colpatterns == R_NilValue) {
+    if (dataFile == R_NilValue || indexFile == R_NilValue || rowpatterns == R_NilValue) {
         error ("tsvGetData: parameter cannot be NULL\n");
     }
 
@@ -370,9 +421,8 @@ tsvGetData (SEXP dataFile, SEXP indexFile, SEXP rowpatterns, SEXP colpatterns, S
     }
 
     NrowPattern = length(rowpatterns);
-    NcolPattern = length(colpatterns);
 #ifdef DEBUG
-    Rprintf ("  tsvGetData: received %d rowpatterns, %d colpatterns\n", NrowPattern, NcolPattern);
+    Rprintf ("  tsvGetData: received %d rowpatterns\n", NrowPattern);
 #endif
 
     rowposns = (long *)R_alloc (NrowPattern, sizeof(long));
@@ -411,15 +461,26 @@ tsvGetData (SEXP dataFile, SEXP indexFile, SEXP rowpatterns, SEXP colpatterns, S
 #ifdef DEBUG
     Rprintf ("  tsvGetData: found %d row matches\n", NrowResult);
 #endif
+
+    if (length(colpatterns) == 0) {
+	colpatterns = autoColPatterns (tsvp, NrowResult == 0 ? -1 : rowposns[0]);
+	PROTECT (colpatterns);
+	nprotect++;
+    }
+    NcolPattern = length(colpatterns);
+#ifdef DEBUG
+    Rprintf ("  tsvGetData: received %d colpatterns\n", NcolPattern);
+#endif
+
     colposns = (long *)R_alloc (NcolPattern, sizeof(long));
     if (colposns == NULL) {
 	fclose (tsvp);
-	error ("tsgGetData: ERROR: unable to allocate working memory: colposns\n");
+	error ("tsgGetData: ERROR: unable to allocate working memory for %d colposns\n", NcolPattern);
     }
     colpats = (const char **)R_alloc (NcolPattern, sizeof(char *));
     if (colpats == NULL) {
 	fclose (tsvp);
-	error ("tsgGetData: ERROR: unable to allocate working memory: colpats\n");
+	error ("tsgGetData: ERROR: unable to allocate working memory for %d colpats\n", NcolPattern);
     }
     for (ii = 0; ii < NcolPattern; ii++) {
 	colpats[ii] = CHAR(STRING_ELT(colpatterns,ii));
