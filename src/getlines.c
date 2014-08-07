@@ -6,6 +6,7 @@
 #include <ctype.h>
 
 #include "tsvio.h"
+#include "dht.h"
 
 enum status
 find_indices (FILE *indexp, long findany, long nindex, const char *labels[], long *index, void (*warn)(char *msg, ...))
@@ -14,8 +15,14 @@ find_indices (FILE *indexp, long findany, long nindex, const char *labels[], lon
 	long	ii;
 	int	ch;
 	char label[1024]; 
-	long len;
+	long lablen, len;
 	char posn[64]; 
+	dynHashTab *dht;
+
+	/* Create temporary hash table of labels we're looking for. */
+	dht = newDynHashTab (1024);
+	for (ii = 0; ii < nindex; ii++)
+	    insertStr (dht, labels[ii], strlen (labels[ii]));
 
 	/* Mark all indices as not found. */
 	for (ii = 0; ii < nindex; ii++) index[ii] = -1;
@@ -25,13 +32,13 @@ find_indices (FILE *indexp, long findany, long nindex, const char *labels[], lon
 
 	    /* Read label. */
 	    label[0] = (unsigned char)ch;
-	    len = 1;
+	    lablen = 1;
 	    while ((ch = getc (indexp)) != EOF && ch != '\t' && ch != '\n') {
-		if (len == sizeof(label)-1)
+		if (lablen == sizeof(label)-1)
 		    return LABEL_TOO_LONG;
-		label[len++] = (unsigned char)ch;
+		label[lablen++] = (unsigned char)ch;
 	    }
-	    label[len] = '\0';
+	    label[lablen] = '\0';
 
 	    if (ch != '\t')
 	        return ch == EOF ? INCOMPLETE_LAST_LINE : NO_INDEX;
@@ -52,17 +59,17 @@ find_indices (FILE *indexp, long findany, long nindex, const char *labels[], lon
 		return INCOMPLETE_LAST_LINE;
 
 	    /* See if label matches any of the ones we're looking for.*/
-	    for (ii = 0; ii < nindex; ii++) {
-	        if (strcmp (labels[ii], label) == 0) {
-		    if (index[ii] >= 0)
-		        warn ("duplicate entry for label %s ignored\n", label);
-		    else {
-		        index[ii] = atol (posn);
-			nfound++;
-		    }
+	    ii = getStringIndex (dht, label, lablen);
+	    if (ii >= 0) {
+		if (index[ii] >= 0)
+		    warn ("duplicate entry for label %s ignored\n", label);
+		else {
+		    index[ii] = atol (posn);
+		    nfound++;
 		}
 	    }
 	}
+	freeDynHashTab (dht);
 
 	if (findany)
 	    return nfound > 0 ? OK : LABEL_NOT_FOUND;

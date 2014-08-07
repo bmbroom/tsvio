@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <unistd.h>
 #include <math.h>
 #include <sys/types.h>
 
@@ -63,6 +64,7 @@ add_score_names (SEXP orig, SEXP mat)
     return mat;
 }
 
+int
 is_fatal_error (enum status res)
 {
     return (res != OK) && (res != EMPTY_FILE) && (res != INCOMPLETE_LAST_LINE);
@@ -336,6 +338,10 @@ autoColPatterns (FILE *tsvp, long rowposn)
 	linelen = get_tsv_line_buffer (buffer, sizeof(buffer), tsvp, 0L);
 	headercols = num_columns (buffer, linelen);
     }
+    #ifdef DEBUG
+        Rprintf ("> autoColPatterns: rowposn=%ld, headercols=%ld, rowcols=%d, headerlen=%ld\n",
+	         rowposn, headercols, rowcols, linelen);
+    #endif
 
     PROTECT (pats = allocVector(STRSXP, rowcols-1));
     numpats = 0;
@@ -353,7 +359,13 @@ autoColPatterns (FILE *tsvp, long rowposn)
 	/* Insert field into list of patterns if not first non-R-style column header. */
 	if ((fstart > 0) || (rowcols != headercols)) {
 	    element = mkCharLen(buffer+fstart, indexp-fstart);
-	    SET_STRING_ELT (pats, numpats++, element);
+	    if (numpats < length(pats)) {
+	        SET_STRING_ELT (pats, numpats, element);
+	    } else {
+		warning ("autoColPatterns: unexpected column header #%ld '%.*s' rowposn=%ld, headercols=%ld, rowcols=%d, headerlen=%ld\n",
+			 numpats, indexp-fstart, buffer+fstart, rowposn, headercols, rowcols, linelen);
+	    }
+	    numpats++;
 	}
 
 	if (indexp < linelen) indexp++; /* Advance over field-terminator, if any. */
@@ -398,14 +410,37 @@ autoRowPatterns (FILE *indexfile)
     return pats;
 }
 
+void
+closeTsvFiles (long numFiles, FILE **tsvpp, FILE **indexpp)
+{
+    long ii;
+    if (tsvpp) {
+        for (ii = 0; ii < numFiles; ii++)
+	    if (tsvpp[ii])
+	        fclose (tsvpp[ii]);
+	free (tsvpp);
+    }
+    if (indexpp) {
+        for (ii = 0; ii < numFiles; ii++)
+	    if (indexpp[ii])
+	        fclose (indexpp[ii]);
+	free (indexpp);
+    }
+}
+
 SEXP
 tsvGetData (SEXP dataFile, SEXP indexFile, SEXP rowpatterns, SEXP colpatterns, SEXP findany)
 {
+    /* Local variables that must have a defined value before jumping to the exit. */
     long nprotect = 0;
-    FILE *tsvp, *indexp;
+    long numFiles = 0;
+    FILE **tsvpp = NULL, **indexpp = NULL;
+    SEXP results = R_NilValue;
+
+    /* Other local variables (exit code will not clean up). */
     long NrowPattern, NrowResult;
     long NcolPattern, NcolResult;
-    SEXP results, dimnames, rownames, colnames;
+    SEXP dimnames, rownames, colnames;
     long *rowposns, *colposns;
     const char **rowpats, **colpats;
     long ii, ff, rowid, colid;
@@ -430,50 +465,67 @@ tsvGetData (SEXP dataFile, SEXP indexFile, SEXP rowpatterns, SEXP colpatterns, S
     PROTECT (findany = AS_LOGICAL(findany));
     nprotect += 5;
 
-    if (dataFile == R_NilValue || indexFile == R_NilValue) {
-        error ("tsvGetData: parameter cannot be NULL\n");
+    numFiles = length(dataFile);
+    if (numFiles == 0) {
+        error ("parameter dataFile cannot be NULL\n");
     }
 
-    tsvp = fopen (CHAR(STRING_ELT(dataFile,0)), "rb");
-    if (tsvp == NULL) {
-	error ("tsvGetData: unable to open datafile '%s' for reading\n", CHAR(STRING_ELT(dataFile,0)));
+    if (length (dataFile) != length(indexFile)) {
+        error ("parameters dataFile and indexFile must have the same length\n");
     }
 
-    indexp = fopen (CHAR(STRING_ELT(indexFile,0)), "rb");
-    if (indexp == NULL) {
-	warning ("tsvGetData: Warning: unable to read index file '%s': attempting to create\n", CHAR(STRING_ELT(indexFile,0)));
-	indexp = fopen (CHAR(STRING_ELT(indexFile,0)), "wb+");
-	if (indexp == NULL) {
-	    warning ("tsvGetData: unable to create indexfile '%s': try to create a temp file\n", CHAR(STRING_ELT(indexFile,0)));
-	    tmpfd = mkstemp (tmpname);
-	    if (tmpfd < 0) {
-		fclose (tsvp);
-		error ("tsvGetData: unable to create even a temporary indexfile\n");
+    tsvpp = (FILE **)malloc(sizeof(FILE *) * numFiles);
+    if (tsvpp == NULL) error ("unable to allocate file handles for %ld tsv files\n", numFiles);
+    for (ii = 0; ii < numFiles; ii++) tsvpp[ii] = NULL;
+    indexpp = (FILE **)malloc(sizeof(FILE *) * numFiles);
+    if (indexpp == NULL) error ("unable to allocate file handles for %ld index files\n", numFiles);
+    for (ii = 0; ii < numFiles; ii++) indexpp[ii] = NULL;
+
+    /* Open all data files. */
+    for (ii = 0; ii < numFiles; ii++) {
+	tsvpp[ii] = fopen (CHAR(STRING_ELT(dataFile,ii)), "rb");
+	if (tsvpp[ii] == NULL) {
+	    closeTsvFiles (numFiles, tsvpp, indexpp);
+	    error ("unable to open datafile '%s' for reading\n", CHAR(STRING_ELT(dataFile,ii)));
+	}
+    }
+
+    /* Open all index files. */
+    for (ii = 0; ii < numFiles; ii++) {
+	indexpp[ii] = fopen (CHAR(STRING_ELT(indexFile,ii)), "rb");
+	if (indexpp[ii] == NULL) {
+	    warning ("unable to read index file '%s': attempting to create\n", CHAR(STRING_ELT(indexFile,ii)));
+	    indexpp[ii] = fopen (CHAR(STRING_ELT(indexFile,ii)), "wb+");
+	    if (indexpp[ii] == NULL) {
+		warning ("unable to create indexfile '%s': try to create a temp file\n", CHAR(STRING_ELT(indexFile,ii)));
+		tmpfd = mkstemp (tmpname);
+		if (tmpfd < 0) {
+		    closeTsvFiles (numFiles, tsvpp, indexpp);
+		    error ("tsvGetData: unable to create even a temporary indexfile\n");
+		}
+		indexpp[ii] = fdopen (tmpfd, "wb+");
+		unlink (tmpname);
 	    }
-	    indexp = fdopen (tmpfd, "wb+");
-	    unlink (tmpname);
+	    res = generate_index (tsvpp[ii], indexpp[ii]);
+	    if (is_fatal_error (res)) {
+		closeTsvFiles (numFiles, tsvpp, indexpp);
+	    }
+	    report_genindex_errors (res, "tsvGetData", dataFile, indexFile);
+	    rewind (tsvpp[ii]);
+	    rewind (indexpp[ii]);
 	}
-	res = generate_index (tsvp, indexp);
-	if (is_fatal_error (res)) {
-	    fclose (tsvp);
-	    fclose (indexp);
-	}
-	report_genindex_errors (res, "tsvGetData", dataFile, indexFile);
-	rewind (tsvp);
-	rewind (indexp);
     }
 
     if (length (rowpatterns) == 0) {
-	rowpatterns = autoRowPatterns (indexp);
+	rowpatterns = autoRowPatterns (indexpp[0]);
 	PROTECT (rowpatterns);
-	rewind (indexp);
+	rewind (indexpp[0]);
 	nprotect++;
     }
 
     NrowPattern = length(rowpatterns);
     if (NrowPattern == 0) {
-	fclose (tsvp);
-	fclose (indexp);
+	closeTsvFiles (numFiles, tsvpp, indexpp);
         error ("tsvGetData: parameter rowpatterns cannot be empty\n");
     }
 #ifdef DEBUG
@@ -482,21 +534,23 @@ tsvGetData (SEXP dataFile, SEXP indexFile, SEXP rowpatterns, SEXP colpatterns, S
 
     rowposns = (long *)R_alloc (NrowPattern, sizeof(long));
     if (rowposns == NULL) {
-	fclose (tsvp);
-	fclose (indexp);
+	closeTsvFiles (numFiles, tsvpp, indexpp);
         error ("tsgGetData: ERROR: unable to allocate working memory: rowposns\n");
     }
     rowpats = (const char **)R_alloc (NrowPattern, sizeof(char *));
     if (rowpats == NULL) {
-	fclose (tsvp);
-	fclose (indexp);
+	closeTsvFiles (numFiles, tsvpp, indexpp);
         error ("tsgGetData: ERROR: unable to allocate working memory: rowpats\n");
     }
     for (ii = 0; ii < NrowPattern; ii++) {
 	rowpats[ii] = CHAR(STRING_ELT(rowpatterns,ii));
     }
-    res = find_indices (indexp, LOGICAL(findany)[0], NrowPattern, rowpats, rowposns, warn);
-    fclose (indexp);
+
+    res = find_indices (indexpp[0], LOGICAL(findany)[0], NrowPattern, rowpats, rowposns, warn);
+
+    /* Can close index files now. */
+    closeTsvFiles (numFiles, NULL, indexpp);
+    indexpp = NULL;
 
     /* Return TSV header and selected lines. */
     if (res != OK) {
@@ -504,8 +558,8 @@ tsvGetData (SEXP dataFile, SEXP indexFile, SEXP rowpatterns, SEXP colpatterns, S
 	Rprintf ("  tsvGetData: error finding row matches\n");
 	results = R_NilValue;
 #endif
-	fclose (tsvp);
-	error ("tsvGetData: row match not found");
+	closeTsvFiles (numFiles, tsvpp, indexpp);
+	error ("row match not found");
     }
     NrowResult = 0;
     for (ii = 0; ii < NrowPattern; ii++) {
@@ -518,7 +572,7 @@ tsvGetData (SEXP dataFile, SEXP indexFile, SEXP rowpatterns, SEXP colpatterns, S
 #endif
 
     if (length(colpatterns) == 0) {
-	colpatterns = autoColPatterns (tsvp, NrowResult == 0 ? -1 : rowposns[0]);
+	colpatterns = autoColPatterns (tsvpp[0], NrowResult == 0 ? -1 : rowposns[0]);
 	PROTECT (colpatterns);
 	nprotect++;
     }
@@ -529,20 +583,20 @@ tsvGetData (SEXP dataFile, SEXP indexFile, SEXP rowpatterns, SEXP colpatterns, S
 
     colposns = (long *)R_alloc (NcolPattern, sizeof(long));
     if (colposns == NULL) {
-	fclose (tsvp);
-	error ("tsgGetData: ERROR: unable to allocate working memory for %d colposns\n", NcolPattern);
+	closeTsvFiles (numFiles, tsvpp, indexpp);
+	error ("unable to allocate working memory for %d colposns\n", NcolPattern);
     }
     colpats = (const char **)R_alloc (NcolPattern, sizeof(char *));
     if (colpats == NULL) {
-	fclose (tsvp);
-	error ("tsgGetData: ERROR: unable to allocate working memory for %d colpats\n", NcolPattern);
+	closeTsvFiles (numFiles, tsvpp, indexpp);
+	error ("unable to allocate working memory for %d colpats\n", NcolPattern);
     }
     for (ii = 0; ii < NcolPattern; ii++) {
 	colpats[ii] = CHAR(STRING_ELT(colpatterns,ii));
     }
 
     /* Read TSV file header line. */
-    tsvheaderlen = get_tsv_line_buffer (buffer, sizeof(buffer), tsvp, 0L);
+    tsvheaderlen = get_tsv_line_buffer (buffer, sizeof(buffer), tsvpp[0], 0L);
     tsvheadercols = num_columns (buffer, tsvheaderlen);
 #ifdef DEBUG
     buffer[tsvheaderlen] = '\0';
@@ -555,8 +609,8 @@ tsvGetData (SEXP dataFile, SEXP indexFile, SEXP rowpatterns, SEXP colpatterns, S
 	Rprintf ("  tsvGetData: error finding col matches\n");
 	results = R_NilValue;
 #endif
-	fclose (tsvp);
-	error ("tsvGetData: col match not found");
+	closeTsvFiles (numFiles, tsvpp, indexpp);
+	error ("col match not found");
     }
 
     maxColWanted = -1;
@@ -600,22 +654,22 @@ tsvGetData (SEXP dataFile, SEXP indexFile, SEXP rowpatterns, SEXP colpatterns, S
     for (ii = 0; ii < NrowPattern; ii++) {
 	if (rowposns[ii] >= 0) {
 	    SET_STRING_ELT (rownames, rowid, STRING_ELT(rowpatterns, ii));
-	    get_tsv_fields (buffer, sizeof(buffer), tsvheadercols, results, NrowResult, rowid++, tsvp, rowposns[ii], maxColWanted, wantedFields);
+	    get_tsv_fields (buffer, sizeof(buffer), tsvheadercols, results, NrowResult, rowid++, tsvpp[0], rowposns[ii], maxColWanted, wantedFields);
 	}
     }
-    fclose (tsvp);
 
+    /* Add dimensions and row/column names to results matrix. */
     PROTECT (results = add_dims (results, NrowResult, NcolResult));
     nprotect++;
-
     PROTECT (dimnames = allocVector (VECSXP, 2)); nprotect++;
     SET_VECTOR_ELT(dimnames, 0, rownames);
     SET_VECTOR_ELT(dimnames, 1, colnames);
-
     setAttrib (results, R_DimNamesSymbol, dimnames);
+
 #ifdef DEBUG
     Rprintf ("< tsvGetData\n");
 #endif
+    closeTsvFiles (numFiles, tsvpp, indexpp);
     UNPROTECT (nprotect);
     return results;
 }
