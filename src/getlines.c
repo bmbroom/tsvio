@@ -5,30 +5,22 @@
 #include <string.h>
 #include <ctype.h>
 
-#include "tsvio.h"
 #include "dht.h"
+#include "tsvio.h"
 
 enum status
-find_indices (FILE *indexp, long findany, long nindex, const char *labels[], long *index, void (*warn)(char *msg, ...))
+scan_index_file (FILE *indexp, dynHashTab *dht, long insertall)
 {
-	long	nfound = 0;
 	long	ii;
 	int	ch;
 	char label[1024]; 
 	long lablen, len;
 	char posn[64]; 
-	dynHashTab *dht;
 
-	/* Create temporary hash table of labels we're looking for. */
-	dht = newDynHashTab (1024);
-	for (ii = 0; ii < nindex; ii++)
-	    insertStr (dht, labels[ii], strlen (labels[ii]));
-
-	/* Mark all indices as not found. */
-	for (ii = 0; ii < nindex; ii++) index[ii] = -1;
+	fseek (indexp, 0L, SEEK_SET);
 
 	/* Assert: indexp is positioned just before either EOF or an input line. */
-	while ((nfound < nindex) && (ch = getc (indexp)) != EOF) {
+	while ((ch = getc (indexp)) != EOF) {
 
 	    /* Read label. */
 	    label[0] = (unsigned char)ch;
@@ -55,33 +47,16 @@ find_indices (FILE *indexp, long findany, long nindex, const char *labels[], lon
 	    }
 	    posn[len] = '\0';
 
+	    /* Update label position. */
+	    if (insertall) {
+		insertStrVal (dht, label, lablen, atol(posn));
+	    } else {
+		changeStrVal (dht, label, lablen, atol(posn));
+	    }
+
 	    if (ch == EOF)
 		return INCOMPLETE_LAST_LINE;
-
-	    /* See if label matches any of the ones we're looking for.*/
-	    ii = getStringIndex (dht, label, lablen);
-	    if (ii >= 0) {
-		if (index[ii] >= 0)
-		    warn ("duplicate entry for label %s ignored\n", label);
-		else {
-		    index[ii] = atol (posn);
-		    nfound++;
-		}
-	    }
 	}
-	freeDynHashTab (dht);
-
-	if (findany)
-	    return nfound > 0 ? OK : LABEL_NOT_FOUND;
-
-	if (nfound < nindex) {
-	    for (ii = 0; ii < nindex; ii++) {
-		if (index[ii] < 0)
-		    warn ("no matching entry for label %s\n", labels[ii]);
-	    }
-	    return LABEL_NOT_FOUND;
-	}
-
 	return OK;
 }
 

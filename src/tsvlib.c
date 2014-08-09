@@ -16,6 +16,7 @@
 #include <Rdefines.h>
 #include <Rmath.h>
 
+#include "dht.h"
 #include "tsvio.h"
 
 static SEXP
@@ -172,10 +173,11 @@ tsvGetLines (SEXP dataFile, SEXP indexFile, SEXP patterns, SEXP findany)
     FILE *tsvp, *indexp;
     long Npattern, Nresult;
     SEXP results;
-    long *posns;
-    const char **pats;
+    char *str;
+    long posn;
     long ii;
     enum status res;
+    dynHashTab *dht;
     
 #ifdef DEBUG
     Rprintf ("> tsvGetLines\n");
@@ -188,7 +190,7 @@ tsvGetLines (SEXP dataFile, SEXP indexFile, SEXP patterns, SEXP findany)
     PROTECT (findany = AS_LOGICAL(findany));
     nprotect += 4;
 
-    if (dataFile == R_NilValue || indexFile == R_NilValue || patterns == R_NilValue) {
+    if (length(dataFile) == 0 || length(indexFile) == 0 || length(patterns) == 0) {
         error ("tsvGetLines: parameter cannot be NULL\n");
     }
 
@@ -202,55 +204,52 @@ tsvGetLines (SEXP dataFile, SEXP indexFile, SEXP patterns, SEXP findany)
     Rprintf ("  tsvGetLines: received %d patterns\n", Npattern);
 #endif
 
-    posns = (long *)R_alloc (Npattern, sizeof(long));
-    if (posns == NULL) {
-	fclose (indexp);
-        error ("tsgGetLines: ERROR: unable to allocate working memory\n");
-    }
-    pats = (const char **)R_alloc (Npattern, sizeof(char *));
-    if (pats == NULL) {
-	fclose (indexp);
-        error ("tsgGetLines: ERROR: unable to allocate working memory\n");
-    }
+    /* Create temporary hash table of labels we're looking for. */
+    dht = newDynHashTab (1024, 0);
     for (ii = 0; ii < Npattern; ii++) {
-	pats[ii] = CHAR(STRING_ELT(patterns,ii));
+	const char *str = CHAR(STRING_ELT(patterns,ii));
+	insertStrVal (dht, str, strlen (str), -1L);
     }
-    res = find_indices (indexp, LOGICAL(findany)[0], Npattern, pats, posns, warn);
+    res = scan_index_file (indexp, dht, Npattern == 0);
     fclose (indexp);
 
-    /* Return TSV header and selected lines. */
-    if (res == OK) {
-	Nresult = 0;
-	for (ii = 0; ii < Npattern; ii++) {
-	    if (posns[ii] >= 0) {
-		Nresult++;
-	    }
-	}
-#ifdef DEBUG
-	Rprintf ("  tsvGetLines: found %d matches\n", Nresult);
-#endif
-	PROTECT (results = allocVector(STRSXP, Nresult+1)); /* Includes header. */
-	nprotect++;
+    if (res != OK) {
+	error ("I/O or format problem scanning index file");
+    }
 
-	tsvp = fopen (CHAR(STRING_ELT(dataFile,0)), "rb");
-	if (tsvp == NULL) {
-	    error ("tsvGetLines: unable to open datafile '%s' for reading\n", CHAR(STRING_ELT(dataFile,0)));
-	}
-	Nresult = 0;
-	SET_STRING_ELT (results, Nresult++, get_tsv_line (tsvp, 0L));
-	for (ii = 0; ii < Npattern; ii++) {
-	    if (posns[ii] >= 0) {
-		SET_STRING_ELT (results, Nresult++, get_tsv_line (tsvp, posns[ii]));
-	    }
-	}
-	fclose (tsvp);
-    } else {
+    /* Verify that we found the required number of labels. */
+    Nresult = Npattern - countValues (dht, -1L);
+#ifdef DEBUG
+    Rprintf ("  tsvGetLines: found %d matches\n", Nresult);
+#endif
+    if ((Nresult == 0) || (!(LOGICAL(findany)[0]) && (Nresult != Npattern))) {
 #ifdef DEBUG
 	Rprintf ("  tsvGetLines: error finding matches\n");
-	results = R_NilValue;
 #endif
+	freeDynHashTab (dht);
 	error ("tsvGetLines: match not found");
     }
+
+    /* Return TSV header and selected lines. */
+
+    PROTECT (results = allocVector(STRSXP, Nresult+1)); /* Includes header. */
+    nprotect++;
+
+    tsvp = fopen (CHAR(STRING_ELT(dataFile,0)), "rb");
+    if (tsvp == NULL) {
+	freeDynHashTab (dht);
+	error ("tsvGetLines: unable to open datafile '%s' for reading\n", CHAR(STRING_ELT(dataFile,0)));
+    }
+
+    SET_STRING_ELT (results, 0, get_tsv_line (tsvp, 0L));
+    Nresult = 1;
+    initIterator (dht, &ii);
+    while (getNextStr (dht, &ii, NULL, NULL, NULL, &posn)) {
+	SET_STRING_ELT (results, Nresult, get_tsv_line (tsvp, posn));
+	Nresult++;
+    }
+    fclose (tsvp);
+    freeDynHashTab (dht);
 
 #ifdef DEBUG
     Rprintf ("< tsvGetLines\n");
@@ -262,42 +261,37 @@ tsvGetLines (SEXP dataFile, SEXP indexFile, SEXP patterns, SEXP findany)
 /* R matrix is laid out in column-major order.
  */
 void
-get_tsv_fields (char *buffer, long buffer_size, long headercols, SEXP strvec, long nrows, long rowid, FILE *tsvp, long rowposn, long maxFieldWanted, long *fieldWanted)
+get_tsv_fields (SEXP strvec,	     /* Destination R 'matrix' */
+		long nrows,	     /* Number of rows in strvec. */
+		long rowid,	     /* Row of strvec in which to save fields from this line. */
+		FILE *tsvp,	     /* Open file from which to read data. */
+		long rowposn,	     /* Offset in bytes from start of file to this row's data. */
+		long maxColumnWanted,/* Largest column we need. */
+		long *columnMap,     /* Col of strvec in which to save field, or -1L if not wanted. */
+		char *buffer,	     /* Line buffer for (re-)use by this function. */
+		long buffer_size)    /* Number of bytes in buffer. */
 {
-    long len;
     long linelen;
-    long linecols;
     long indexp;
     long fstart;
     SEXP element;
-    long infield, outfield;
+    long inputColumn, outputColumn;
 
 
     /* Read line into buffer. */
     linelen = get_tsv_line_buffer (buffer, buffer_size, tsvp, rowposn);
-    linecols = num_columns (buffer, linelen);
 
-    /* Validate number of columns and accommodate 'R-style' tsv files with one less header column. */
-    if (headercols == linecols) {
-        /* first header field is not a column label, so one less column header. */
-	/* But first check we didn't match that first label. */
-	if (fieldWanted[0] >= 0) {
-	    error ("tsvGetData: for row %ld: number of columns (%ld) equals number of header columns, but first column header has matched a column pattern\n", rowid, linecols);
-	}
-	/* advance over unwanted field. */
-	fieldWanted++;
-	maxFieldWanted--;
-    } else if (headercols == (linecols-1)) {
-        /* No need to adjust fieldWanted. */
-    } else {
-        error ("tsvGetData: for row %ld: number of columns (%ld) does not match number of header columns (%ld)\n", rowid, linecols, headercols);
-    }
-
-    infield = 0;
     indexp = 0;
-    /* Assert: infield fields in the buffer have been processed. */
+    /* Advance over first column (row header) and its terminator. */
+    while ((indexp < linelen) && buffer[indexp] != '\t' && buffer[indexp] != '\n') {
+	indexp++;
+    }
+    if (indexp < linelen) indexp++; /* Advance over field-terminator, if any. */
+
+    inputColumn = 0;
+    /* Assert: inputColumn data columns in the buffer have been processed. */
     /* Assert: indexp is positioned at start of a field or immediately following buffer contents. */
-    while ((infield <= maxFieldWanted) && (indexp < linelen)) {
+    while ((inputColumn <= maxColumnWanted) && (indexp < linelen)) {
 
 	/* Read field. */
 	fstart = indexp;
@@ -305,48 +299,53 @@ get_tsv_fields (char *buffer, long buffer_size, long headercols, SEXP strvec, lo
 	    indexp++;
 	}
 
-	/* Insert field into output matrix if required. */
-	if (infield <= maxFieldWanted) {
-	    outfield = fieldWanted[infield];
-	    if (outfield >= 0) {
+	/* Insert inputColumn into output matrix if required. */
+	if (inputColumn <= maxColumnWanted) {
+	    outputColumn = columnMap[inputColumn];
+	    if (outputColumn >= 0) {
 		element = mkCharLen(buffer+fstart, indexp-fstart);
-		SET_STRING_ELT (strvec, outfield*nrows+rowid, element);
+		SET_STRING_ELT (strvec, outputColumn*nrows+rowid, element);
 	    }
 	}
 
 	if (indexp < linelen) indexp++; /* Advance over field-terminator, if any. */
-	infield++;
+	inputColumn++;
     }
 }
 
-SEXP
-autoColPatterns (FILE *tsvp, long rowposn)
+enum status
+scan_header_line (dynHashTab *dht, FILE *tsvp, int insertall, char *buffer, long buffersize)
 {
-    char buffer[1024*1024];
     long linelen, headercols, rowcols, numpats;
-    SEXP element, pats;
     long indexp;
     long fstart;
+    char *s;
 
-    if (rowposn < 0) {
-	linelen = get_tsv_line_buffer (buffer, sizeof(buffer), tsvp, 0L);
-	headercols = num_columns (buffer, linelen);
-	rowcols = headercols + 1; /* Assume R-style. */
-    } else {
-	linelen = get_tsv_line_buffer (buffer, sizeof(buffer), tsvp, rowposn);
-	rowcols = num_columns (buffer, linelen);
-	linelen = get_tsv_line_buffer (buffer, sizeof(buffer), tsvp, 0L);
-	headercols = num_columns (buffer, linelen);
+    /* Determine number of columns on first and second lines. Input header line. */
+    fseek (tsvp, 0L, SEEK_SET);
+    if (!fgets (buffer, buffersize, tsvp)) {
+        error ("unable to read data file header line");
     }
+    if (!fgets (buffer, buffersize, tsvp)) {
+	/* File contains a header only? */
+        return OK;
+    }
+    rowcols = num_columns (buffer, strlen(buffer));
+    fseek (tsvp, 0L, SEEK_SET);
+    if (!(s = fgets (buffer, buffersize, tsvp))) {
+        error ("unable to re-read data file header line");
+    }
+    linelen = strlen (buffer);
+    headercols = num_columns (buffer, linelen);
+
     #ifdef DEBUG
-        Rprintf ("> autoColPatterns: rowposn=%ld, headercols=%ld, rowcols=%d, headerlen=%ld\n",
-	         rowposn, headercols, rowcols, linelen);
+        Rprintf ("> scan_header_line: headercols=%ld, rowcols=%d, headerlen=%ld\n",
+	         headercols, rowcols, linelen);
     #endif
 
-    PROTECT (pats = allocVector(STRSXP, rowcols-1));
     numpats = 0;
     indexp = 0;
-    /* Assert: numpats fields have been copied into pats. */
+    /* Assert: numpats fields have been inserted into the dht this call. */
     /* Assert: indexp is positioned at start of a field or immediately following buffer contents. */
     while (indexp < linelen) {
 
@@ -356,14 +355,12 @@ autoColPatterns (FILE *tsvp, long rowposn)
 	    indexp++;
 	}
 
-	/* Insert field into list of patterns if not first non-R-style column header. */
+	/* Insert field into dht if not first non-R-style column header. */
 	if ((fstart > 0) || (rowcols != headercols)) {
-	    element = mkCharLen(buffer+fstart, indexp-fstart);
-	    if (numpats < length(pats)) {
-	        SET_STRING_ELT (pats, numpats, element);
+	    if (insertall) {
+		insertStrVal (dht, buffer+fstart, indexp-fstart, numpats);
 	    } else {
-		warning ("autoColPatterns: unexpected column header #%ld '%.*s' rowposn=%ld, headercols=%ld, rowcols=%d, headerlen=%ld\n",
-			 numpats, indexp-fstart, buffer+fstart, rowposn, headercols, rowcols, linelen);
+		changeStrVal (dht, buffer+fstart, indexp-fstart, numpats);
 	    }
 	    numpats++;
 	}
@@ -371,10 +368,9 @@ autoColPatterns (FILE *tsvp, long rowposn)
 	if (indexp < linelen) indexp++; /* Advance over field-terminator, if any. */
     }
     if (numpats != (rowcols-1)) {
-        error ("autoColPatterns: program bug detected: number of patterns (%ld) differs from number of data columns (%ld)\n", numpats, rowcols-1);
+        error ("scan_header_line: program bug detected: number of patterns (%ld) differs from number of data columns (%ld)\n", numpats, rowcols-1);
     }
-    UNPROTECT (1);
-    return pats;
+    return OK;
 }
 
 SEXP
@@ -429,6 +425,91 @@ closeTsvFiles (long numFiles, FILE **tsvpp, FILE **indexpp)
 }
 
 SEXP
+dhtToStringVec (const dynHashTab *dht)
+{
+    SEXP names;
+    long ii;
+    char *str;
+    long len;
+    long order;
+
+    PROTECT (names = allocVector(STRSXP, dhtNumStrings(dht)));
+    initIterator (dht, &ii);
+    while (getNextStr (dht, &ii, &str, &len, &order, NULL)) {
+	SET_STRING_ELT (names, order, mkCharLen(str,len));
+    }
+    UNPROTECT (1);
+    return names;
+}
+
+/* Read the contents of one data file and store the results in the destination matrix results.
+ */
+void
+getDataFromFile (SEXP results,	    /* Destination matrix. */
+		 long NrowResult,   /* Number of rows in destination matrix. */
+		 FILE *indexp,	    /* File descriptor for index file. */
+		 FILE *tsvp,	    /* File descriptor for data file. */
+		 dynHashTab *rowdht,/* DHT containing desired row labels. */
+		 dynHashTab *coldht,/* DHT containing desired column labels. */
+		 char *buffer,	    /* Buffer for (re-)use by this function. */
+		 long buffersize)   /* Number of bytes in buffer. */
+{
+    enum status res;
+    long ii, inputColumn, outputColumn;
+    long maxInputColumn, *columnMap;
+    long outputRow, rowPosn;
+
+    /* Determine desired rows in this file, and their byte offset in this file. */
+    setAllValues (rowdht, -1L);
+    res = scan_index_file (indexp, rowdht, 0);
+    if (res != OK || countNotValues (rowdht, -1L) == 0) {
+	warn ("input file matches no desired row labels, skipping\n");
+	return;
+    }
+
+    /* Determine desired columns in this file, and their column number in this file. */
+    setAllValues (coldht, -1L);
+    res = scan_header_line (coldht, tsvp, 0, buffer, buffersize);
+    if (res != OK || countNotValues (coldht, -1L) == 0) {
+	warn ("input file matches no desired column labels, skipping\n");
+	return;
+    }
+
+    // That are three column name orders:
+    // 1. Order of names in original request list (no longer available)
+    // 2. Order of names in this tsv file (called inputColumns below)
+    // 3. Order of names in output matrix (called outputColumns below)
+
+    // We generate here a mapping from the order of columns in this tsv file (input columns)
+    // to the order of columns in the output matrix:  outputColumn == columnMap[inputColumn].
+    // columnMap[inputColumn] == -1L iff inputColumn is not contained in the output matrix.
+    // We make columnMap long enough to contain the largest wanted input column.
+    maxInputColumn = -1L;
+    initIterator (coldht, &ii);
+    while (getNextStr (coldht, &ii, NULL, NULL, NULL, &inputColumn)) {
+	if (inputColumn > maxInputColumn) maxInputColumn = inputColumn;
+    }
+    columnMap = (long *)R_alloc (maxInputColumn+1, sizeof(long));
+    for (ii = 0; ii <= maxInputColumn; ii++) {
+	columnMap[ii] = -1;
+    }
+    initIterator (coldht, &ii);
+    while (getNextStr (coldht, &ii, NULL, NULL, &outputColumn, &inputColumn)) {
+	if (inputColumn >= 0) {
+	    columnMap[inputColumn] = outputColumn;
+	}
+    }
+
+    // Scan rows present in this tsv file.
+    initIterator (rowdht, &ii);
+    while (getNextStr (rowdht, &ii, NULL, NULL, &outputRow, &rowPosn)) {
+	if (rowPosn >= 0L) {
+	    get_tsv_fields (results, NrowResult, outputRow, tsvp, rowPosn, maxInputColumn, columnMap, buffer, buffersize);
+	}
+    }
+}
+
+SEXP
 tsvGetData (SEXP dataFile, SEXP indexFile, SEXP rowpatterns, SEXP colpatterns, SEXP findany)
 {
     /* Local variables that must have a defined value before jumping to the exit. */
@@ -440,18 +521,14 @@ tsvGetData (SEXP dataFile, SEXP indexFile, SEXP rowpatterns, SEXP colpatterns, S
     /* Other local variables (exit code will not clean up). */
     long NrowPattern, NrowResult;
     long NcolPattern, NcolResult;
-    SEXP dimnames, rownames, colnames;
-    long *rowposns, *colposns;
-    const char **rowpats, **colpats;
-    long ii, ff, rowid, colid;
+    SEXP dimnames;
+    long fieldIdx, posn;
+    long ii, ff, colid;
     enum status res;
-    long maxColWanted;
-    long *wantedFields;
     char buffer[1024*1024];
-    long tsvheaderlen;	   /* Number of bytes in tsv header line. */
-    long tsvheadercols;    /* Number of columns in tsv header line. */
     char tmpname[] = "/tmp/tsvindex-XXXXXX";
     int tmpfd;
+    dynHashTab *rowdht, *coldht;
     
 #ifdef DEBUG
     Rprintf ("> tsvGetData\n");
@@ -516,160 +593,140 @@ tsvGetData (SEXP dataFile, SEXP indexFile, SEXP rowpatterns, SEXP colpatterns, S
 	}
     }
 
-    if (length (rowpatterns) == 0) {
-	rowpatterns = autoRowPatterns (indexpp[0]);
-	PROTECT (rowpatterns);
-	rewind (indexpp[0]);
-	nprotect++;
-    }
-
+    /* Insert explicitly specified row patterns. */
     NrowPattern = length(rowpatterns);
-    if (NrowPattern == 0) {
-	closeTsvFiles (numFiles, tsvpp, indexpp);
-        error ("tsvGetData: parameter rowpatterns cannot be empty\n");
-    }
+    rowdht = newDynHashTab (1024, NrowPattern == 0 ? DHT_STRDUP : 0);
 #ifdef DEBUG
-    Rprintf ("  tsvGetData: received %d rowpatterns\n", NrowPattern);
+    Rprintf ("  tsvGetData: received %d explicitly specified rowpatterns\n", NrowPattern);
 #endif
-
-    rowposns = (long *)R_alloc (NrowPattern, sizeof(long));
-    if (rowposns == NULL) {
-	closeTsvFiles (numFiles, tsvpp, indexpp);
-        error ("tsgGetData: ERROR: unable to allocate working memory: rowposns\n");
-    }
-    rowpats = (const char **)R_alloc (NrowPattern, sizeof(char *));
-    if (rowpats == NULL) {
-	closeTsvFiles (numFiles, tsvpp, indexpp);
-        error ("tsgGetData: ERROR: unable to allocate working memory: rowpats\n");
-    }
-    for (ii = 0; ii < NrowPattern; ii++) {
-	rowpats[ii] = CHAR(STRING_ELT(rowpatterns,ii));
-    }
-
-    res = find_indices (indexpp[0], LOGICAL(findany)[0], NrowPattern, rowpats, rowposns, warn);
-
-    /* Can close index files now. */
-    closeTsvFiles (numFiles, NULL, indexpp);
-    indexpp = NULL;
-
-    /* Return TSV header and selected lines. */
-    if (res != OK) {
-#ifdef DEBUG
-	Rprintf ("  tsvGetData: error finding row matches\n");
-	results = R_NilValue;
-#endif
-	closeTsvFiles (numFiles, tsvpp, indexpp);
-	error ("row match not found");
-    }
-    NrowResult = 0;
-    for (ii = 0; ii < NrowPattern; ii++) {
-	if (rowposns[ii] >= 0) {
-	    NrowResult++;
+    if (NrowPattern > 0) {
+	for (ii = 0; ii < NrowPattern; ii++) {
+	    const char *str = CHAR(STRING_ELT(rowpatterns,ii));
+	    insertStrVal (rowdht, str, strlen (str), -1L);
 	}
     }
+
+    /* Scan all index files for matching row labels. */
+    for (ii = 0; ii < numFiles; ii++) {
+	res = scan_index_file (indexpp[ii], rowdht, NrowPattern == 0);
+	if (res != OK) {
+	    closeTsvFiles (numFiles, tsvpp, indexpp);
+	    freeDynHashTab (rowdht);
+	    error ("i/o or syntax error processing indexfile %d\n", ii+1);
+	}
+    }
+
+    NrowResult = countNotValues (rowdht, -1L);
 #ifdef DEBUG
     Rprintf ("  tsvGetData: found %d row matches\n", NrowResult);
 #endif
-
-    if (length(colpatterns) == 0) {
-	colpatterns = autoColPatterns (tsvpp[0], NrowResult == 0 ? -1 : rowposns[0]);
-	PROTECT (colpatterns);
-	nprotect++;
+    if (NrowResult == 0) {
+	closeTsvFiles (numFiles, tsvpp, indexpp);
+	freeDynHashTab (rowdht);
+        error ("no matching rows found\n");
     }
+    if (NrowResult != NrowPattern && NrowPattern > 0 && !LOGICAL(findany)[0]) {
+	closeTsvFiles (numFiles, tsvpp, indexpp);
+	freeDynHashTab (rowdht);
+        error ("not all required row patterns were matched\n");
+    }
+
+    if (NrowPattern > 0) {
+	/* Create new hashtab containing only found row patterns */
+        dynHashTab *tmpdht = newDynHashTab (NrowResult*2, 0);
+	const char *str;
+	long posn, len;
+	for (ii = 0; ii < NrowPattern; ii++) {
+	    str = CHAR(STRING_ELT(rowpatterns,ii));
+	    len = strlen (str);
+	    posn = getStringValue (rowdht, str, len);
+	    if (posn >= 0) {
+	        insertStrVal (tmpdht, str, len, posn);
+	    }
+	}
+	free (rowdht);
+	rowdht = tmpdht;
+    }
+
+    /* Scan all header lines for matching column labels. */
+
     NcolPattern = length(colpatterns);
 #ifdef DEBUG
-    Rprintf ("  tsvGetData: received %d colpatterns\n", NcolPattern);
+    Rprintf ("  tsvGetData: received %d explicitly specified column patterns\n", NcolPattern);
 #endif
-
-    colposns = (long *)R_alloc (NcolPattern, sizeof(long));
-    if (colposns == NULL) {
-	closeTsvFiles (numFiles, tsvpp, indexpp);
-	error ("unable to allocate working memory for %d colposns\n", NcolPattern);
-    }
-    colpats = (const char **)R_alloc (NcolPattern, sizeof(char *));
-    if (colpats == NULL) {
-	closeTsvFiles (numFiles, tsvpp, indexpp);
-	error ("unable to allocate working memory for %d colpats\n", NcolPattern);
-    }
+    coldht = newDynHashTab (1024, NcolPattern == 0 ? DHT_STRDUP : 0);
     for (ii = 0; ii < NcolPattern; ii++) {
-	colpats[ii] = CHAR(STRING_ELT(colpatterns,ii));
+	const char *str = CHAR(STRING_ELT(colpatterns,ii));
+	insertStrVal (coldht, str, strlen (str), -1L);
     }
-
-    /* Read TSV file header line. */
-    tsvheaderlen = get_tsv_line_buffer (buffer, sizeof(buffer), tsvpp[0], 0L);
-    tsvheadercols = num_columns (buffer, tsvheaderlen);
-#ifdef DEBUG
-    buffer[tsvheaderlen] = '\0';
-    warn ("Read tsv buffer %ld chars: %s", tsvheaderlen, buffer);
-#endif
-
-    res = find_col_indices (buffer, tsvheaderlen, LOGICAL(findany)[0], NcolPattern, colpats, colposns, warn);
-    if (res != OK) {
-#ifdef DEBUG
-	Rprintf ("  tsvGetData: error finding col matches\n");
-	results = R_NilValue;
-#endif
-	closeTsvFiles (numFiles, tsvpp, indexpp);
-	error ("col match not found");
-    }
-
-    maxColWanted = -1;
-    NcolResult = 0;
-    for (ii = 0; ii < NcolPattern; ii++) {
-	ff = colposns[ii];
-	if (ff >= 0) {
-	    if (ff > maxColWanted) maxColWanted = ff;
-	    NcolResult++;
+    for (ii = 0; ii < numFiles; ii++) {
+	res = scan_header_line (coldht, tsvpp[ii], NcolPattern == 0, buffer, sizeof(buffer));
+	if (res != OK) {
+	    closeTsvFiles (numFiles, tsvpp, indexpp);
+	    freeDynHashTab (rowdht);
+	    freeDynHashTab (coldht);
+	    error ("i/o or syntax error scanning header of datafile %d\n", ii+1);
 	}
     }
-    PROTECT (colnames = allocVector (STRSXP, NcolResult)); nprotect++;
-    wantedFields = (long *)R_alloc (maxColWanted+1, sizeof(long));
-    for (ff = 0; ff <= maxColWanted; ff++) {
-	wantedFields[ff] = -1;
-    }
-    // Three column name orders:
-    // 1. Order of names in request list
-    // 2. Order of names in tsv file
-    // 3. Order of names in output matrix (which is a subset of 1).
 
-    // wantedFields: order of names in tsv file -> order of names in output matrix.
-    // colnames: order of names in request list -> order of names in output matrix.
-    colid = 0;
-    for (ii = 0; ii < NcolPattern; ii++) { // Iterate over names in request list.
-	ff = colposns[ii];	// Get field number of name in tsv file, if any.
-	if (ff >= 0) {
-	    wantedFields[ff] = colid;
-	    SET_STRING_ELT (colnames, colid, STRING_ELT(colpatterns, ii));
-	    colid++;
-	}
-    }
+    NcolResult = countNotValues (coldht, -1L);
 #ifdef DEBUG
-    Rprintf ("  tsvGetData: found %d column matches\n", NcolResult);
+    Rprintf ("  tsvGetData: found %d col matches\n", NcolResult);
 #endif
+    if (NcolResult == 0) {
+	closeTsvFiles (numFiles, tsvpp, indexpp);
+	freeDynHashTab (rowdht);
+	freeDynHashTab (coldht);
+        error ("no matching cols found\n");
+    }
+    if (NcolResult != NcolPattern && NcolPattern > 0 && !LOGICAL(findany)[0]) {
+	closeTsvFiles (numFiles, tsvpp, indexpp);
+	freeDynHashTab (rowdht);
+	freeDynHashTab (coldht);
+        error ("not all required col patterns were matched\n");
+    }
 
-    PROTECT (rownames = allocVector(STRSXP, NrowResult)); nprotect++;
+    if (NcolPattern > 0) {
+	/* Create new hashtab containing only found col patterns */
+        dynHashTab *tmpdht = newDynHashTab (NcolResult*2, 0);
+	const char *str;
+	long posn, len;
+	for (ii = 0; ii < NcolPattern; ii++) {
+	    str = CHAR(STRING_ELT(colpatterns,ii));
+	    len = strlen (str);
+	    posn = getStringValue (coldht, str, len);
+	    if (posn >= 0) {
+	        insertStrVal (tmpdht, str, len, posn);
+	    }
+	}
+	free (coldht);
+	coldht = tmpdht;
+    }
+
+
+    /* Allocate space for result. */
     PROTECT (results = allocVector(STRSXP, NrowResult*NcolResult)); nprotect++;
-
-    rowid = 0;
-    for (ii = 0; ii < NrowPattern; ii++) {
-	if (rowposns[ii] >= 0) {
-	    SET_STRING_ELT (rownames, rowid, STRING_ELT(rowpatterns, ii));
-	    get_tsv_fields (buffer, sizeof(buffer), tsvheadercols, results, NrowResult, rowid++, tsvpp[0], rowposns[ii], maxColWanted, wantedFields);
-	}
+    for (ii = 0; ii < numFiles; ii++) {
+	getDataFromFile (results, NrowResult,
+	                 indexpp[ii], tsvpp[ii],
+			 rowdht, coldht,
+			 buffer, sizeof(buffer));
     }
 
-    /* Add dimensions and row/column names to results matrix. */
+    /* Add dimensions and row/column names to the results matrix. */
     PROTECT (results = add_dims (results, NrowResult, NcolResult));
     nprotect++;
     PROTECT (dimnames = allocVector (VECSXP, 2)); nprotect++;
-    SET_VECTOR_ELT(dimnames, 0, rownames);
-    SET_VECTOR_ELT(dimnames, 1, colnames);
+    SET_VECTOR_ELT(dimnames, 0, dhtToStringVec (rowdht));
+    SET_VECTOR_ELT(dimnames, 1, dhtToStringVec (coldht));
     setAttrib (results, R_DimNamesSymbol, dimnames);
 
 #ifdef DEBUG
     Rprintf ("< tsvGetData\n");
 #endif
     closeTsvFiles (numFiles, tsvpp, indexpp);
+    freeDynHashTab (rowdht);
+    freeDynHashTab (coldht);
     UNPROTECT (nprotect);
     return results;
 }

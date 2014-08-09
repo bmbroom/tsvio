@@ -1,7 +1,7 @@
 Package: tsvio
 Title: tsvio: Simple Utilities for TSV files
-Version: 0.0.7
-Date: 2014-08-06
+Version: 0.0.8
+Date: 2014-08-08
 Author: Bradley Broom
 Maintainer: Bradley Broom <bmbroom@mdanderson.org>
 OS_type: unix

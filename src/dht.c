@@ -97,12 +97,13 @@ static inline unsigned long hash (const char *str, long len)
 }
 
 
-/* For each hash table slot, we maintain 3 fields.
+/* For each hash table slot, we maintain 4 fields.
  */
 typedef struct {
     long order;		/* Number of strings inserted before this one. */
     const char *str;	/* Address of string in this slot (needed for rehashing). */
     long len;		/* Length of string in this slot. */
+    long value;		/* User value attached to this string. */
 } dhtSlot;
 
 /* A free slot is indicated by a special value of the order field. */
@@ -116,13 +117,14 @@ struct _dynhashtab {
     long count;		/* Number of slots in use. */
     long loadLimit;	/* When count reaches this limit, we grow the table. */
     dhtSlot *slot;	/* Hash table slots. */
+    long flags;		/* Hash table specific options. */
 };
 
 
 /* This function allocates a DHT with an initial size given by the parameter.
  */
 dynHashTab *
-newDynHashTab (long isize)
+newDynHashTab (long isize, long flags)
 {
     dynHashTab *dht = malloc (sizeof (*dht));
     long ii;
@@ -131,6 +133,7 @@ newDynHashTab (long isize)
     dht->size = isize;
     dht->loadLimit = (isize * 3) / 4;
     dht->count = 0;
+    dht->flags = flags;
 
     /* Allocate and initialize slots. */
     dht->slot = malloc (sizeof(dhtSlot) * isize);
@@ -142,8 +145,37 @@ newDynHashTab (long isize)
     return dht;
 }
 
+#define DOINSERT  0x01
+#define CHANGEVAL 0x02
+
+static void hashTabOp (dynHashTab *dht, const char *str, long len, long value, long flags);
+
 void
 insertStr (dynHashTab *dht, const char *str, long len)
+{
+    hashTabOp (dht, str, len, 0L, DOINSERT);
+}
+
+void
+insertStrVal (dynHashTab *dht, const char *str, long len, long value)
+{
+    hashTabOp (dht, str, len, value, DOINSERT|CHANGEVAL);
+}
+
+void
+changeStrVal (dynHashTab *dht, const char *str, long len, long value)
+{
+    hashTabOp (dht, str, len, value, CHANGEVAL);
+}
+
+long
+dhtNumStrings (const dynHashTab *dht)
+{
+    return dht->count;
+}
+
+static void
+hashTabOp (dynHashTab *dht, const char *str, long len, long value, long flags)
 {
     unsigned long h = hash (str, len);
     dhtSlot *newslot;
@@ -155,18 +187,26 @@ insertStr (dynHashTab *dht, const char *str, long len)
      */
     iters = 0;
     while (dht->slot[idx = (h % dht->size)].order != FREESLOT) {
-	if ((dht->slot[idx].len == len) && (strncmp (dht->slot[idx].str, str, len) == 0))
+	if ((dht->slot[idx].len == len) && (strncmp (dht->slot[idx].str, str, len) == 0)) {
+	    if (flags & CHANGEVAL) {
+		dht->slot[idx].value = value;
+	    }
 	    return;
+	}
         h = rehash (str, len, h);
 	if (iters++ > 1000) {
 	    warning ("dht.insertStr: excessive looping in hash.\n");
 	    return;
 	}
     }
+    if (!(flags & DOINSERT))
+       return;
+
     /* Put new entry into empty slot and increment number of entries. */
     dht->slot[idx].order = dht->count++;
-    dht->slot[idx].str = str;
+    dht->slot[idx].str = dht->flags & DHT_STRDUP ? strndup (str, len) : str;
     dht->slot[idx].len = len;
+    dht->slot[idx].value = value;
 
     /* Check load and grow DHT if required. */
     if (dht->count >= dht->loadLimit) {
@@ -225,21 +265,116 @@ getStringIndex (const dynHashTab *dht, const char *str, long len)
         h = rehash (str, len, h);
 	if (iters++ > 1000) {
 	    warning ("dht.getStringIndex: excessive looping in hash.\n");
-	    return -1;
+	    return -1L;
 	}
     }
-    return -1;
+    return -1L;
+}
+
+void
+setAllValues (dynHashTab *dht, long value)
+{
+    long ii;
+
+    for (ii = 0; ii < dht->size; ii++) {
+	if (dht->slot[ii].order != FREESLOT) {
+	    dht->slot[ii].value = value;
+	}
+    }
+}
+
+long
+countValues (const dynHashTab *dht, long value)
+{
+    long ii;
+    long n = 0L;
+
+    for (ii = 0; ii < dht->size; ii++) {
+	if (dht->slot[ii].order != FREESLOT && dht->slot[ii].value == value) {
+	    n++;
+	}
+    }
+    return n;
+}
+
+long
+countNotValues (const dynHashTab *dht, long value)
+{
+    long ii;
+    long n = 0L;
+
+    for (ii = 0; ii < dht->size; ii++) {
+	if (dht->slot[ii].order != FREESLOT && dht->slot[ii].value != value) {
+	    n++;
+	}
+    }
+    return n;
+}
+
+void
+initIterator (const dynHashTab *dht, long *iter)
+{
+    *iter = -1L;
+}
+
+int
+getNextStr (const dynHashTab *dht, long *iter, char **strp, long *lenp, long *orderp, long *valuep)
+{
+    dhtSlot *sp;
+    long next = *iter;
+    while (++next < dht->size) {
+	sp = &dht->slot[next];
+        if (sp->order != FREESLOT) {
+	    if (strp) *strp = sp->str;
+	    if (lenp) *lenp = sp->len;
+	    if (orderp) *orderp = sp->order;
+	    if (valuep) *valuep = sp->value;
+	    *iter = next;
+	    return 1;
+	}
+    }
+    *iter = next;
+    return 0;
+}
+
+long
+getStringValue (const dynHashTab *dht, const char *str, long len)
+{
+    unsigned long h = hash (str, len);
+    long iters = 0;
+    long idx;
+
+    while (dht->slot[idx = (h % dht->size)].order != FREESLOT) {
+	if ((dht->slot[idx].len == len) && (strncmp (dht->slot[idx].str, str, len) == 0))
+	    return dht->slot[idx].value;
+        h = rehash (str, len, h);
+	if (iters++ > 1000) {
+	    warning ("dht.getStringValue: excessive looping in hash.\n");
+	    return -1L;
+	}
+    }
+    return -1L;
 }
 
 /* This function destroys the DHT and releases any storage allocated for it by this module.
- * Releasing backing storage for the strings inserted into the table is the responsibility
- * of the caller.
+ * If DHT_STRDUP is not set, releasing backing storage for the strings
+ * inserted into the table is the responsibility of the caller.
  *
  * After this function returns, the DHT and any memory associated with it is not valid. 
+ *
+ * NB: If DHT_STRDUP is set, these are all strings we allocated are at liberty to free.
  */
 void
 freeDynHashTab (dynHashTab *dht)
 {
+    long ii;
+    if (dht->flags & DHT_STRDUP) {
+	for (ii = 0; ii < dht->size; ii++) {
+	    if (dht->slot[ii].order != FREESLOT) {
+	        free ((char *)(dht->slot[ii].str));
+	    }
+	}
+    }
     free (dht->slot);
     free (dht);
 }
