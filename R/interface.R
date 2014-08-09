@@ -70,6 +70,9 @@ tsvGetLines <- function (filename, indexfile, patterns, findany=TRUE) {
 #' lines with keys that exactly match at least one pattern string are returned.
 #' @param colpatterns A vector of strings to match against the column headers in the first row
 #'
+#' @param dtype A prototype element that specifies by example the type of matrix to return.  The
+#' value of the parameter is ignored.  Accepted types are string (default), numeric (float), and integer.
+#'
 #' @param findany If false, all patterns must be matched. If true (default) at least one pattern must match.
 #'
 #' @return A matrix containing one row for each matched line and one column for each matched column.
@@ -80,6 +83,6 @@ tsvGetLines <- function (filename, indexfile, patterns, findany=TRUE) {
 #' tab <- tsvGetData ("data.tsv", "index.tsv", c("pattern1", "pattern2"), c('cpat1'))
 #'
 #' @seealso tsvGenIndex
-tsvGetData <- function (filename, indexfile, rowpatterns, colpatterns, findany=TRUE) {
-    .Call("tsvGetData", filename, indexfile, rowpatterns, colpatterns, findany)
+tsvGetData <- function (filename, indexfile, rowpatterns, colpatterns, dtype="", findany=TRUE) {
+    .Call("tsvGetData", filename, indexfile, rowpatterns, colpatterns, dtype, findany)
 }

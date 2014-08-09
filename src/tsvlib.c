@@ -15,6 +15,7 @@
 #include <R.h>
 #include <Rdefines.h>
 #include <Rmath.h>
+#include <Rinternals.h>
 
 #include "dht.h"
 #include "tsvio.h"
@@ -258,25 +259,77 @@ tsvGetLines (SEXP dataFile, SEXP indexFile, SEXP patterns, SEXP findany)
     return results;
 }
 
+static void set_result_str (SEXP result, long idx, char *s, long n)
+{
+    SET_STRING_ELT (result, idx, mkCharLen(s, n));
+}
+
+static void set_result_int (SEXP result, long idx, char *s, long n)
+{
+    long value;
+    char *end;
+
+    value = strtol (s, &end, 10);
+    if (end == s) {
+        if (strncmp (s, "NA", 2) == 0) {
+	    value = NA_INTEGER;
+	} else {
+	    error ("Non-integer field '%.*s' encountered", n, s);
+	}
+    } else if (*end != '\t' && *end != '\n' && *end != '\r' && *end != '\0') {
+	error ("unexpected non-numeric data following integer field: '%.*s'", n, s);
+    }
+    INTEGER(result)[idx] = value;
+}
+
+static void set_result_num (SEXP result, long idx, char *s, long n)
+{
+    double value;
+    char *end;
+
+    value = strtod (s, &end);
+    if (end == s) {
+        if (strncmp (s, "NA", 2) == 0) {
+	    value = NA_REAL;
+	} else {
+	    error ("Non-numeric field '%.*s' encountered", n, s);
+	}
+    } else if (*end != '\t' && *end != '\n' && *end != '\r' && *end != '\0') {
+	error ("unexpected non-numeric data following numeric field: '%.*s'", n, s);
+    }
+    REAL(result)[idx] = value;
+}
+
+typedef void (*setterFunction) (SEXP, long, char *, long);
+
+setterFunction
+get_result_setter (SEXP dtype)
+{
+    if (IS_CHARACTER(dtype)) return set_result_str;
+    if (IS_INTEGER(dtype)) return set_result_int;
+    if (IS_NUMERIC(dtype)) return set_result_num;
+    return NULL;
+}
+
 /* R matrix is laid out in column-major order.
  */
 void
-get_tsv_fields (SEXP strvec,	     /* Destination R 'matrix' */
-		long nrows,	     /* Number of rows in strvec. */
-		long rowid,	     /* Row of strvec in which to save fields from this line. */
+get_tsv_fields (SEXP result,	     /* Destination R 'matrix' */
+		setterFunction setResult, /* For setting an element of result */
+		long nrows,	     /* Number of rows in result. */
+		long rowid,	     /* Row of result in which to save fields from this line. */
 		FILE *tsvp,	     /* Open file from which to read data. */
 		long rowposn,	     /* Offset in bytes from start of file to this row's data. */
 		long maxColumnWanted,/* Largest column we need. */
-		long *columnMap,     /* Col of strvec in which to save field, or -1L if not wanted. */
+		long *columnMap,     /* Col of result in which to save field, or -1L if not wanted. */
 		char *buffer,	     /* Line buffer for (re-)use by this function. */
 		long buffer_size)    /* Number of bytes in buffer. */
 {
     long linelen;
     long indexp;
     long fstart;
-    SEXP element;
     long inputColumn, outputColumn;
-
+    int dtype = TYPEOF(result);
 
     /* Read line into buffer. */
     linelen = get_tsv_line_buffer (buffer, buffer_size, tsvp, rowposn);
@@ -303,8 +356,7 @@ get_tsv_fields (SEXP strvec,	     /* Destination R 'matrix' */
 	if (inputColumn <= maxColumnWanted) {
 	    outputColumn = columnMap[inputColumn];
 	    if (outputColumn >= 0) {
-		element = mkCharLen(buffer+fstart, indexp-fstart);
-		SET_STRING_ELT (strvec, outputColumn*nrows+rowid, element);
+		setResult (result, outputColumn*nrows+rowid, buffer+fstart, indexp-fstart);
 	    }
 	}
 
@@ -446,6 +498,7 @@ dhtToStringVec (const dynHashTab *dht)
  */
 void
 getDataFromFile (SEXP results,	    /* Destination matrix. */
+		 setterFunction setResult, /* For setting an element of results */
 		 long NrowResult,   /* Number of rows in destination matrix. */
 		 FILE *indexp,	    /* File descriptor for index file. */
 		 FILE *tsvp,	    /* File descriptor for data file. */
@@ -504,19 +557,20 @@ getDataFromFile (SEXP results,	    /* Destination matrix. */
     initIterator (rowdht, &ii);
     while (getNextStr (rowdht, &ii, NULL, NULL, &outputRow, &rowPosn)) {
 	if (rowPosn >= 0L) {
-	    get_tsv_fields (results, NrowResult, outputRow, tsvp, rowPosn, maxInputColumn, columnMap, buffer, buffersize);
+	    get_tsv_fields (results, setResult, NrowResult, outputRow, tsvp, rowPosn, maxInputColumn, columnMap, buffer, buffersize);
 	}
     }
 }
 
 SEXP
-tsvGetData (SEXP dataFile, SEXP indexFile, SEXP rowpatterns, SEXP colpatterns, SEXP findany)
+tsvGetData (SEXP dataFile, SEXP indexFile, SEXP rowpatterns, SEXP colpatterns, SEXP dtype, SEXP findany)
 {
     /* Local variables that must have a defined value before jumping to the exit. */
     long nprotect = 0;
     long numFiles = 0;
     FILE **tsvpp = NULL, **indexpp = NULL;
     SEXP results = R_NilValue;
+    setterFunction setResult;
 
     /* Other local variables (exit code will not clean up). */
     long NrowPattern, NrowResult;
@@ -541,6 +595,11 @@ tsvGetData (SEXP dataFile, SEXP indexFile, SEXP rowpatterns, SEXP colpatterns, S
     PROTECT (colpatterns = AS_CHARACTER(colpatterns));
     PROTECT (findany = AS_LOGICAL(findany));
     nprotect += 5;
+
+    setResult = get_result_setter (dtype);
+    if (setResult == NULL) {
+        error ("unable to directly load data matrices of type dtype");
+    }
 
     numFiles = length(dataFile);
     if (numFiles == 0) {
@@ -705,9 +764,9 @@ tsvGetData (SEXP dataFile, SEXP indexFile, SEXP rowpatterns, SEXP colpatterns, S
 
 
     /* Allocate space for result. */
-    PROTECT (results = allocVector(STRSXP, NrowResult*NcolResult)); nprotect++;
+    PROTECT (results = allocVector(TYPEOF(dtype), NrowResult*NcolResult)); nprotect++;
     for (ii = 0; ii < numFiles; ii++) {
-	getDataFromFile (results, NrowResult,
+	getDataFromFile (results, setResult, NrowResult,
 	                 indexpp[ii], tsvpp[ii],
 			 rowdht, coldht,
 			 buffer, sizeof(buffer));
