@@ -94,27 +94,34 @@ tsvGenIndex (SEXP dataFile, SEXP indexFile)
 {
     FILE *tsvp, *indexp;
     enum status res;
+    long ii;
 
     PROTECT (dataFile = AS_CHARACTER(dataFile));
     PROTECT (indexFile = AS_CHARACTER(indexFile));
 
-    if (dataFile == R_NilValue || indexFile == R_NilValue) {
-        error ("tsvGenIndex: parameter cannot be NULL\n");
+    if (length(dataFile) == 0 || length(indexFile) == 0) {
+        error ("parameter cannot be NULL");
     }
 
-    tsvp = fopen (CHAR(STRING_ELT(dataFile,0)), "rb");
-    if (tsvp == NULL) {
-        error ("tsvGenIndex: unable to open datafile '%s' for reading\n", CHAR(STRING_ELT(dataFile,0)));
-    }
-    indexp = fopen (CHAR(STRING_ELT(indexFile,0)), "wb");
-    if (indexp == NULL) {
-        error ("tsvGenIndex: unable to open indexfile '%s' for writing\n", CHAR(STRING_ELT(indexFile,0)));
+    if (length(dataFile) != length(indexFile)) {
+        error ("parameters dataFile and indexFile must have the same length");
     }
 
-    res = generate_index (tsvp, indexp);
-    fclose (tsvp);
-    fclose (indexp);
-    report_genindex_errors (res, "tsvGenIndex", dataFile, indexFile);
+    for (ii = 0; ii < length(dataFile); ii++) {
+	tsvp = fopen (CHAR(STRING_ELT(dataFile,ii)), "rb");
+	if (tsvp == NULL) {
+	    error ("unable to open datafile '%s' for reading", CHAR(STRING_ELT(dataFile,ii)));
+	}
+	indexp = fopen (CHAR(STRING_ELT(indexFile,ii)), "wb");
+	if (indexp == NULL) {
+	    fclose (tsvp);
+	    error ("unable to open indexfile '%s' for writing", CHAR(STRING_ELT(indexFile,ii)));
+	}
+	res = generate_index (tsvp, indexp);
+	fclose (tsvp);
+	fclose (indexp);
+	report_genindex_errors (res, "tsvGenIndex", dataFile, indexFile);
+    }
     UNPROTECT (2);
     return R_NilValue;
 }

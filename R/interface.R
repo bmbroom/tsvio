@@ -11,9 +11,10 @@ NULL
 #' contain either the same number or one fewer columns than the data lines, which must all contain
 #' the same number of columns.  The first column of each data line will be indexed.
 #'
-#' @param filename The name (and path) of the file containing the data to index.
+#' @param filename The name (and path) of the file(s) containing the data to index.
 #'
-#' @param indexfile The name (and path) of the file to which the index will be written.
+#' @param indexfile The name (and path) of the file(s) to which the index will be written.  There must
+#' be exactly one index file for every filename.
 #'
 #' @export
 #'
