@@ -36,36 +36,6 @@ add_dims (SEXP svec, long nrows, long ncols)
     return svec;
 }
 
-static SEXP
-add_score_names (SEXP orig, SEXP mat)
-{
-    SEXP dimNames;
-    SEXP colNames;
-    SEXP size;
-    SEXP class;
-    long nprotect;
-    long nvar = 2;
-
-    PROTECT (orig);
-    PROTECT (mat);
-    PROTECT (dimNames = getAttrib (orig, R_DimNamesSymbol));
-    nprotect = 3;
-
-    if (dimNames != R_NilValue) {
-	PROTECT (colNames = VECTOR_ELT (dimNames, 1));
-	nprotect++;
-	setAttrib (mat, install("Labels"), colNames);
-    }
-
-    PROTECT (size = allocVector(INTSXP, 1));
-    nprotect++;
-    INTEGER(size)[0] = nvar;
-    setAttrib (mat, install("Size"), size);
-
-    UNPROTECT (nprotect);
-    return mat;
-}
-
 int
 is_fatal_error (enum status res)
 {
@@ -181,7 +151,6 @@ tsvGetLines (SEXP dataFile, SEXP indexFile, SEXP patterns, SEXP findany)
     FILE *tsvp, *indexp;
     long Npattern, Nresult;
     SEXP results;
-    char *str;
     long posn;
     long ii;
     enum status res;
@@ -336,7 +305,6 @@ get_tsv_fields (SEXP result,	     /* Destination R 'matrix' */
     long indexp;
     long fstart;
     long inputColumn, outputColumn;
-    int dtype = TYPEOF(result);
 
     /* Read line into buffer. */
     linelen = get_tsv_line_buffer (buffer, buffer_size, tsvp, rowposn);
@@ -501,6 +469,22 @@ dhtToStringVec (const dynHashTab *dht)
     return names;
 }
 
+typedef struct {
+    long rowPosn;	/* Byte offset of desired row in file. */
+    long outputRow;	/* Row index of row in destination matrix. */
+} rowInfo_t;
+
+int
+compare_rowInfo_t (const void *a, const void *b)
+{
+    const rowInfo_t *ap = (rowInfo_t *)a;
+    const rowInfo_t *bp = (rowInfo_t *)b;
+
+    if (ap->rowPosn < bp->rowPosn) return -1;
+    if (ap->rowPosn > bp->rowPosn) return 1;
+    return 0;
+}
+
 /* Read the contents of one data file and store the results in the destination matrix results.
  */
 void
@@ -517,12 +501,18 @@ getDataFromFile (SEXP results,	    /* Destination matrix. */
     enum status res;
     long ii, inputColumn, outputColumn;
     long maxInputColumn, *columnMap;
-    long outputRow, rowPosn;
+    rowInfo_t *rowInfo;
+    long rowsWanted, nrow;
 
     /* Determine desired rows in this file, and their byte offset in this file. */
     setAllValues (rowdht, -1L);
     res = scan_index_file (indexp, rowdht, 0);
-    if (res != OK || countNotValues (rowdht, -1L) == 0) {
+    if (res != OK) {
+	warn ("problem scanning index file, skipping\n");
+	return;
+    }
+    rowsWanted = countNotValues (rowdht, -1L);
+    if (rowsWanted == 0) {
 	warn ("input file matches no desired row labels, skipping\n");
 	return;
     }
@@ -561,11 +551,18 @@ getDataFromFile (SEXP results,	    /* Destination matrix. */
     }
 
     // Scan rows present in this tsv file.
+    // First sort rows into ascending positions within the input file.
+    rowInfo = (rowInfo_t *)R_alloc (rowsWanted, sizeof(rowInfo_t));
+    nrow = 0;
     initIterator (rowdht, &ii);
-    while (getNextStr (rowdht, &ii, NULL, NULL, &outputRow, &rowPosn)) {
-	if (rowPosn >= 0L) {
-	    get_tsv_fields (results, setResult, NrowResult, outputRow, tsvp, rowPosn, maxInputColumn, columnMap, buffer, buffersize);
+    while (nrow < rowsWanted && getNextStr (rowdht, &ii, NULL, NULL, &rowInfo[nrow].outputRow, &rowInfo[nrow].rowPosn)) {
+	if (rowInfo[nrow].rowPosn >= 0L) {
+	    nrow++;
 	}
+    }
+    qsort (rowInfo, rowsWanted, sizeof(rowInfo_t), compare_rowInfo_t);
+    for (nrow = 0; nrow < rowsWanted; nrow++) {
+	get_tsv_fields (results, setResult, NrowResult, rowInfo[nrow].outputRow, tsvp, rowInfo[nrow].rowPosn, maxInputColumn, columnMap, buffer, buffersize);
     }
 }
 
@@ -583,8 +580,7 @@ tsvGetData (SEXP dataFile, SEXP indexFile, SEXP rowpatterns, SEXP colpatterns, S
     long NrowPattern, NrowResult;
     long NcolPattern, NcolResult;
     SEXP dimnames;
-    long fieldIdx, posn;
-    long ii, ff, colid;
+    long ii;
     enum status res;
     char buffer[1024*1024];
     char tmpname[] = "/tmp/tsvindex-XXXXXX";
