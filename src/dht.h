@@ -70,5 +70,5 @@ extern void initIterator (const dynHashTab *dht, long *iter);
  * The behavior of the iterator is undefined if strings are inserted into the table during
  * the iteration.
  */
-extern int getNextStr (const dynHashTab *dht, long *iter, char **strp, long *lenp, long *orderp, long *valuep);
+extern int getNextStr (const dynHashTab *dht, long *iter, const char **strp, long *lenp, long *orderp, long *valuep);
 

@@ -318,7 +318,7 @@ initIterator (const dynHashTab *dht, long *iter)
 }
 
 int
-getNextStr (const dynHashTab *dht, long *iter, char **strp, long *lenp, long *orderp, long *valuep)
+getNextStr (const dynHashTab *dht, long *iter, const char **strp, long *lenp, long *orderp, long *valuep)
 {
     dhtSlot *sp;
     long next = *iter;

@@ -460,7 +460,7 @@ dhtToStringVec (const dynHashTab *dht)
 {
     SEXP names;
     long ii;
-    char *str;
+    const char *str;
     long len;
     long order;
 
