@@ -267,6 +267,10 @@ static void set_result_num (SEXP result, long idx, char *s, long n)
     if (end == s) {
         if (strncmp (s, "NA", 2) == 0) {
 	    value = NA_REAL;
+        } else if (strncmp (s, "-Inf", 4) == 0) {
+	    value = R_NegInf;
+        } else if (strncmp (s, "Inf", 3) == 0) {
+	    value = R_PosInf;
 	} else {
 	    error ("Non-numeric field '%.*s' encountered", n, s);
 	}
@@ -674,7 +678,7 @@ tsvGetData (SEXP dataFile, SEXP indexFile, SEXP rowpatterns, SEXP colpatterns, S
 	if (res != OK) {
 	    closeTsvFiles (numFiles, tsvpp, indexpp);
 	    freeDynHashTab (rowdht);
-	    error ("i/o or syntax error processing indexfile %d\n", ii+1);
+	    error ("i/o or syntax error %d processing indexfile %d\n", res, ii+1);
 	}
     }
 
