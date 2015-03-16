@@ -34,7 +34,9 @@ The index file must have been created by tsvGenIndex and the data file must not 
 since the index file was created.
 }
 \examples{
+\dontrun{
 tab <- tsvGetData ("data.tsv", "index.tsv", c("pattern1", "pattern2"), c('cpat1'))
+}
 }
 \seealso{
 tsvGenIndex

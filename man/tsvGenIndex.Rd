@@ -19,7 +19,9 @@ contain either the same number or one fewer columns than the data lines, which m
 the same number of columns.  The first column of each data line will be indexed.
 }
 \examples{
-#tsvGenIndex ("data.tsv", "index.tsv")
+\dontrun{
+tsvGenIndex ("data.tsv", "index.tsv")
+}
 }
 \seealso{
 tsvGetLines

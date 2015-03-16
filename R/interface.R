@@ -19,7 +19,9 @@ NULL
 #' @export
 #'
 #' @examples
-#' #tsvGenIndex ("data.tsv", "index.tsv")
+#'\dontrun{
+#' tsvGenIndex ("data.tsv", "index.tsv")
+#'}
 #'
 #' @seealso tsvGetLines
 tsvGenIndex <- function (filename, indexfile) {
@@ -48,7 +50,9 @@ tsvGenIndex <- function (filename, indexfile) {
 #' @export
 #'
 #' @examples
+#'\dontrun{
 #' tab <- tsvGetLines ("data.tsv", "index.tsv", c("pattern1", "pattern2"))
+#'}
 #'
 #' @seealso tsvGenIndex
 tsvGetLines <- function (filename, indexfile, patterns, findany=TRUE) {
@@ -81,7 +85,9 @@ tsvGetLines <- function (filename, indexfile, patterns, findany=TRUE) {
 #' @export
 #'
 #' @examples
+#'\dontrun{
 #' tab <- tsvGetData ("data.tsv", "index.tsv", c("pattern1", "pattern2"), c('cpat1'))
+#'}
 #'
 #' @seealso tsvGenIndex
 tsvGetData <- function (filename, indexfile, rowpatterns, colpatterns, dtype="", findany=TRUE) {
