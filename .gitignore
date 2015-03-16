@@ -1,4 +1,2 @@
-NAMESPACE
-man
 src/*.o
 src/*.so
