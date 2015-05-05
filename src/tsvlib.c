@@ -244,16 +244,20 @@ static void set_result_int (SEXP result, long idx, char *s, long n)
 {
     long value;
     char *end;
+    char *scopy = (char *)alloca(n+1);
 
-    value = strtol (s, &end, 10);
-    if (end == s) {
-        if (strncmp (s, "NA", 2) == 0) {
+    strncpy (scopy, s, n);
+    scopy[n] = '\0';
+
+    value = strtol (scopy, &end, 10);
+    if (end == scopy) {
+        if (scopy[0] == '\0' || strncmp (scopy, "NA", 2) == 0) {
 	    value = NA_INTEGER;
 	} else {
-	    error ("Non-integer field '%.*s' encountered", n, s);
+	    error ("Non-integer field '%.*s' encountered", n, scopy);
 	}
     } else if (*end != '\t' && *end != '\n' && *end != '\r' && *end != '\0') {
-	error ("unexpected non-numeric data following integer field: '%.*s'", n, s);
+	error ("unexpected non-numeric data following integer field: '%.*s'", n, scopy);
     }
     INTEGER(result)[idx] = value;
 }
@@ -262,20 +266,23 @@ static void set_result_num (SEXP result, long idx, char *s, long n)
 {
     double value;
     char *end;
+    char *scopy = (char *)alloca(n+1);
 
-    value = strtod (s, &end);
-    if (end == s) {
-        if (strncmp (s, "NA", 2) == 0) {
+    strncpy (scopy, s, n);
+    scopy[n] = '\0';
+    value = strtod (scopy, &end);
+    if (end == scopy) {
+        if (scopy[0] == '\0' || strncmp (scopy, "NA", 2) == 0) {
 	    value = NA_REAL;
-        } else if (strncmp (s, "-Inf", 4) == 0) {
+        } else if (strncmp (scopy, "-Inf", 4) == 0) {
 	    value = R_NegInf;
-        } else if (strncmp (s, "Inf", 3) == 0) {
+        } else if (strncmp (scopy, "Inf", 3) == 0) {
 	    value = R_PosInf;
 	} else {
-	    error ("Non-numeric field '%.*s' encountered", n, s);
+	    error ("Non-numeric field '%.*s' encountered", n, scopy);
 	}
     } else if (*end != '\t' && *end != '\n' && *end != '\r' && *end != '\0') {
-	error ("unexpected non-numeric data following numeric field: '%.*s'", n, s);
+	error ("unexpected non-numeric data following numeric field: '%.*s'", n, scopy);
     }
     REAL(result)[idx] = value;
 }
