@@ -20,6 +20,9 @@
 #include "dht.h"
 #include "tsvio.h"
 
+/* Size of per line input buffer. */
+#define LINEBUFFERSIZE	(1024*1024)
+
 static SEXP
 add_dims (SEXP svec, long nrows, long ncols)
 {
@@ -127,11 +130,10 @@ get_tsv_line_buffer (char *buffer, size_t bufsize, FILE *tsvp, long posn)
 }
 
 SEXP
-get_tsv_line (FILE *tsvp, long posn)
+get_tsv_line_buffer_SEXP (char *buffer, size_t bufsize, FILE *tsvp, long posn)
 {
-    char buffer[1024*1024];
     int len;
-    len = get_tsv_line_buffer (buffer, sizeof(buffer), tsvp, posn);
+    len = get_tsv_line_buffer (buffer, bufsize, tsvp, posn);
     return mkCharLen(buffer,len);
 }
 
@@ -155,6 +157,7 @@ tsvGetLines (SEXP dataFile, SEXP indexFile, SEXP patterns, SEXP findany)
     long ii;
     enum status res;
     dynHashTab *dht;
+    char *buffer;
     
 #ifdef DEBUG
     Rprintf ("> tsvGetLines\n");
@@ -218,13 +221,17 @@ tsvGetLines (SEXP dataFile, SEXP indexFile, SEXP patterns, SEXP findany)
 	error ("tsvGetLines: unable to open datafile '%s' for reading\n", CHAR(STRING_ELT(dataFile,0)));
     }
 
-    SET_STRING_ELT (results, 0, get_tsv_line (tsvp, 0L));
+    /* Allocate line buffer. */
+    buffer = (char *)malloc(LINEBUFFERSIZE);
+    if (buffer == NULL) error ("unable to allocate line buffer\n");
+    SET_STRING_ELT (results, 0, get_tsv_line_buffer_SEXP (buffer, LINEBUFFERSIZE, tsvp, 0L));
     Nresult = 1;
     initIterator (dht, &ii);
     while (getNextStr (dht, &ii, NULL, NULL, NULL, &posn)) {
-	SET_STRING_ELT (results, Nresult, get_tsv_line (tsvp, posn));
+	SET_STRING_ELT (results, Nresult, get_tsv_line_buffer_SEXP (buffer, LINEBUFFERSIZE, tsvp, posn));
 	Nresult++;
     }
+    free (buffer);
     fclose (tsvp);
     freeDynHashTab (dht);
 
@@ -414,14 +421,17 @@ scan_header_line (dynHashTab *dht, FILE *tsvp, int insertall, char *buffer, long
 SEXP
 autoRowPatterns (FILE *indexfile)
 {
-    char buffer[1024*1024];
+    char *buffer;
     long linelen, numpats, indexp;
     SEXP element, pats;
+
+    buffer = (char *)malloc(LINEBUFFERSIZE);
+    if (buffer == NULL) error ("unable to allocate line buffer\n");
 
     /* Count number of row index entries, allocate vector. */
     rewind (indexfile);
     numpats = 0;
-    while (fgets (buffer, sizeof(buffer), indexfile)) {
+    while (fgets (buffer, LINEBUFFERSIZE, indexfile)) {
         numpats++;
     }
     PROTECT (pats = allocVector(STRSXP, numpats));
@@ -429,7 +439,7 @@ autoRowPatterns (FILE *indexfile)
     /* Read each row label and assign to list of patterns. */
     rewind (indexfile);
     numpats = 0;
-    while (fgets (buffer, sizeof(buffer), indexfile)) {
+    while (fgets (buffer, LINEBUFFERSIZE, indexfile)) {
 	linelen = strlen (buffer);
 	indexp = 0;
 	while ((indexp < linelen) && buffer[indexp] != '\t' && buffer[indexp] != '\n') {
@@ -439,6 +449,8 @@ autoRowPatterns (FILE *indexfile)
 	SET_STRING_ELT (pats, numpats, element);
         numpats++;
     }
+
+    free (buffer);
 
     UNPROTECT (1);
     return pats;
@@ -593,7 +605,7 @@ tsvGetData (SEXP dataFile, SEXP indexFile, SEXP rowpatterns, SEXP colpatterns, S
     SEXP dimnames;
     long ii;
     enum status res;
-    char buffer[1024*1024];
+    char *buffer;
     char tmpname[] = "/tmp/tsvindex-XXXXXX";
     int tmpfd;
     dynHashTab *rowdht, *coldht;
@@ -624,6 +636,8 @@ tsvGetData (SEXP dataFile, SEXP indexFile, SEXP rowpatterns, SEXP colpatterns, S
         error ("parameters dataFile and indexFile must have the same length\n");
     }
 
+    buffer = (char *)malloc(LINEBUFFERSIZE);
+    if (buffer == NULL) error ("unable to allocate line buffer\n");
     tsvpp = (FILE **)malloc(sizeof(FILE *) * numFiles);
     if (tsvpp == NULL) error ("unable to allocate file handles for %ld tsv files\n", numFiles);
     for (ii = 0; ii < numFiles; ii++) tsvpp[ii] = NULL;
@@ -635,6 +649,7 @@ tsvGetData (SEXP dataFile, SEXP indexFile, SEXP rowpatterns, SEXP colpatterns, S
     for (ii = 0; ii < numFiles; ii++) {
 	tsvpp[ii] = fopen (CHAR(STRING_ELT(dataFile,ii)), "rb");
 	if (tsvpp[ii] == NULL) {
+	    free (buffer);
 	    closeTsvFiles (numFiles, tsvpp, indexpp);
 	    error ("unable to open datafile '%s' for reading\n", CHAR(STRING_ELT(dataFile,ii)));
 	}
@@ -650,6 +665,7 @@ tsvGetData (SEXP dataFile, SEXP indexFile, SEXP rowpatterns, SEXP colpatterns, S
 		warning ("unable to create indexfile '%s': try to create a temp file\n", CHAR(STRING_ELT(indexFile,ii)));
 		tmpfd = mkstemp (tmpname);
 		if (tmpfd < 0) {
+		    free (buffer);
 		    closeTsvFiles (numFiles, tsvpp, indexpp);
 		    error ("tsvGetData: unable to create even a temporary indexfile\n");
 		}
@@ -658,6 +674,7 @@ tsvGetData (SEXP dataFile, SEXP indexFile, SEXP rowpatterns, SEXP colpatterns, S
 	    }
 	    res = generate_index (tsvpp[ii], indexpp[ii]);
 	    if (is_fatal_error (res)) {
+		free (buffer);
 		closeTsvFiles (numFiles, tsvpp, indexpp);
 	    }
 	    report_genindex_errors (res, "tsvGetData", dataFile, indexFile);
@@ -683,6 +700,7 @@ tsvGetData (SEXP dataFile, SEXP indexFile, SEXP rowpatterns, SEXP colpatterns, S
     for (ii = 0; ii < numFiles; ii++) {
 	res = scan_index_file (indexpp[ii], rowdht, NrowPattern == 0);
 	if (res != OK) {
+	    free (buffer);
 	    closeTsvFiles (numFiles, tsvpp, indexpp);
 	    freeDynHashTab (rowdht);
 	    error ("i/o or syntax error %d processing indexfile %d\n", res, ii+1);
@@ -694,11 +712,13 @@ tsvGetData (SEXP dataFile, SEXP indexFile, SEXP rowpatterns, SEXP colpatterns, S
     Rprintf ("  tsvGetData: found %d row matches\n", NrowResult);
 #endif
     if (NrowResult == 0) {
+	free (buffer);
 	closeTsvFiles (numFiles, tsvpp, indexpp);
 	freeDynHashTab (rowdht);
         error ("no matching rows found\n");
     }
     if (NrowResult != NrowPattern && NrowPattern > 0 && !LOGICAL(findany)[0]) {
+	free (buffer);
 	closeTsvFiles (numFiles, tsvpp, indexpp);
 	freeDynHashTab (rowdht);
         error ("not all required row patterns were matched\n");
@@ -733,8 +753,9 @@ tsvGetData (SEXP dataFile, SEXP indexFile, SEXP rowpatterns, SEXP colpatterns, S
 	insertStrVal (coldht, str, strlen (str), -1L);
     }
     for (ii = 0; ii < numFiles; ii++) {
-	res = scan_header_line (coldht, tsvpp[ii], NcolPattern == 0, buffer, sizeof(buffer));
+	res = scan_header_line (coldht, tsvpp[ii], NcolPattern == 0, buffer, LINEBUFFERSIZE);
 	if (res != OK) {
+	    free (buffer);
 	    closeTsvFiles (numFiles, tsvpp, indexpp);
 	    freeDynHashTab (rowdht);
 	    freeDynHashTab (coldht);
@@ -747,12 +768,14 @@ tsvGetData (SEXP dataFile, SEXP indexFile, SEXP rowpatterns, SEXP colpatterns, S
     Rprintf ("  tsvGetData: found %d col matches\n", NcolResult);
 #endif
     if (NcolResult == 0) {
+	free (buffer);
 	closeTsvFiles (numFiles, tsvpp, indexpp);
 	freeDynHashTab (rowdht);
 	freeDynHashTab (coldht);
         error ("no matching cols found\n");
     }
     if (NcolResult != NcolPattern && NcolPattern > 0 && !LOGICAL(findany)[0]) {
+	free (buffer);
 	closeTsvFiles (numFiles, tsvpp, indexpp);
 	freeDynHashTab (rowdht);
 	freeDynHashTab (coldht);
@@ -783,7 +806,7 @@ tsvGetData (SEXP dataFile, SEXP indexFile, SEXP rowpatterns, SEXP colpatterns, S
 	getDataFromFile (results, setResult, NrowResult,
 	                 indexpp[ii], tsvpp[ii],
 			 rowdht, coldht,
-			 buffer, sizeof(buffer));
+			 buffer, LINEBUFFERSIZE);
     }
 
     /* Add dimensions and row/column names to the results matrix. */
@@ -797,6 +820,7 @@ tsvGetData (SEXP dataFile, SEXP indexFile, SEXP rowpatterns, SEXP colpatterns, S
 #ifdef DEBUG
     Rprintf ("< tsvGetData\n");
 #endif
+    free (buffer);
     closeTsvFiles (numFiles, tsvpp, indexpp);
     freeDynHashTab (rowdht);
     freeDynHashTab (coldht);
