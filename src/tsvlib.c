@@ -8,7 +8,14 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
-#include <unistd.h>
+#ifdef _WIN32
+#include <io.h>
+#include <fcntl.h>
+#include <share.h>
+#include <sys/stat.h>
+#else
+#include <unistd.h>  /* For unlink */
+#endif
 #include <math.h>
 #include <sys/types.h>
 
@@ -606,7 +613,13 @@ tsvGetData (SEXP dataFile, SEXP indexFile, SEXP rowpatterns, SEXP colpatterns, S
     long ii;
     enum status res;
     char *buffer;
+#ifdef _WIN32
+    char tmpname[] = "tmpXXXXXX";
+    char tmpname2[10];
+    int rez;
+#else
     char tmpname[] = "/tmp/tsvindex-XXXXXX";
+#endif
     int tmpfd;
     dynHashTab *rowdht, *coldht;
     
@@ -663,14 +676,26 @@ tsvGetData (SEXP dataFile, SEXP indexFile, SEXP rowpatterns, SEXP colpatterns, S
 	    indexpp[ii] = fopen (CHAR(STRING_ELT(indexFile,ii)), "wb+");
 	    if (indexpp[ii] == NULL) {
 		warning ("unable to create indexfile '%s': try to create a temp file\n", CHAR(STRING_ELT(indexFile,ii)));
+#ifdef _WIN32
+                strcpy_s (tmpname2, sizeof(tmpname2), tmpname);
+		rez = _mktemp_s (tmpname2, sizeof(tmpname2));
+                if (rez == 0) {
+                    _sopen_s (&tmpfd, tmpname2, _O_RDWR | _O_CREAT | _O_TEMPORARY | _O_SHORT_LIVED, _SH_DENYNO, _S_IREAD|_S_IWRITE);
+                } else {
+                    tmpfd = -1;
+                }
+#else
 		tmpfd = mkstemp (tmpname);
+#endif
 		if (tmpfd < 0) {
 		    free (buffer);
 		    closeTsvFiles (numFiles, tsvpp, indexpp);
 		    error ("tsvGetData: unable to create even a temporary indexfile\n");
 		}
 		indexpp[ii] = fdopen (tmpfd, "wb+");
+#ifndef _WIN32
 		unlink (tmpname);
+#endif
 	    }
 	    res = generate_index (tsvpp[ii], indexpp[ii]);
 	    if (is_fatal_error (res)) {

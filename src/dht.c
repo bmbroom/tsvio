@@ -204,7 +204,15 @@ hashTabOp (dynHashTab *dht, const char *str, long len, long value, long flags)
 
     /* Put new entry into empty slot and increment number of entries. */
     dht->slot[idx].order = dht->count++;
+#ifdef _WIN32
+    if (dht->flags & DHT_STRDUP) {
+        if ((dht->slot[idx].str = malloc (len)) != NULL)
+            memcpy (dht->slot[idx].str, str, len);
+    } else
+        dht->slot[idx].str = str;
+#else
     dht->slot[idx].str = dht->flags & DHT_STRDUP ? strndup (str, len) : str;
+#endif
     dht->slot[idx].len = len;
     dht->slot[idx].value = value;
 

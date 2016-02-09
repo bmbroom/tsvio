@@ -1,6 +1,5 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <unistd.h>
 #include <errno.h>
 #include <string.h>
 #include <ctype.h>
@@ -11,7 +10,6 @@
 enum status
 scan_index_file (FILE *indexp, dynHashTab *dht, long insertall)
 {
-	long	ii;
 	int	ch;
 	char label[1024]; 
 	long lablen, len;
@@ -81,13 +79,12 @@ find_col_indices (char *buffer, long buflen, long findany, long nindex, const ch
 {
 	long	nfound = 0;
 	long	ii;
-	int	ch;
 	char label[1024]; 
-	long len;
-	char posn[64]; 
 	char *ptr;
 	long indexp = 0;
+#ifdef DEBUG
 	long fstart;
+#endif
 	long fieldnum;
 
 
@@ -100,7 +97,9 @@ find_col_indices (char *buffer, long buflen, long findany, long nindex, const ch
 
 	    /* Read field. */
 	    fieldnum++;
+#ifdef DEBUG
 	    fstart = indexp;
+#endif
 	    ptr = label;
 	    while ((indexp < buflen) && buffer[indexp] != '\t' && buffer[indexp] != '\n') {
 		*ptr++ = buffer[indexp++];

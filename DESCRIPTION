@@ -1,13 +1,12 @@
 Package: tsvio
-Title: tsvio: Simple Utilities for TSV files
-Version: 0.0.13
-Date: 2015-05-08
+Title: Simple Utilities for Tab-Separated-Value (TSV) Files
+Version: 0.0.13.9004
+Date: 2016-01-29
 Author: Bradley Broom
 Maintainer: Bradley Broom <bmbroom@mdanderson.org>
-OS_type: unix
 Depends:
     R (>= 2.14.0)
-Description: This package provides simple functions for processing data files in
+Description: Provides simple functions for processing data files in
     tab-separated value (TSV) format.
 License: GPL (>= 3)
 Copyright: file COPYRIGHTS
