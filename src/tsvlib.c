@@ -28,7 +28,7 @@
 #include "tsvio.h"
 
 /* Size of per line input buffer. */
-#define LINEBUFFERSIZE	(1024*1024)
+#define LINEBUFFERSIZE	(10*1024*1024)
 
 static SEXP
 add_dims (SEXP svec, long nrows, long ncols)
@@ -368,7 +368,7 @@ get_tsv_fields (SEXP result,	     /* Destination R 'matrix' */
 enum status
 scan_header_line (dynHashTab *dht, FILE *tsvp, int insertall, char *buffer, long buffersize)
 {
-    long linelen, headercols, rowcols, numpats;
+    long rowlen, linelen, headercols, rowcols, numpats;
     long indexp;
     long fstart;
     char *s;
@@ -382,7 +382,8 @@ scan_header_line (dynHashTab *dht, FILE *tsvp, int insertall, char *buffer, long
 	/* File contains a header only? */
         return OK;
     }
-    rowcols = num_columns (buffer, strlen(buffer));
+    rowlen = strlen(buffer);
+    rowcols = num_columns (buffer, rowlen);
     fseek (tsvp, 0L, SEEK_SET);
     if (!(s = fgets (buffer, buffersize, tsvp))) {
         error ("unable to re-read data file header line");
@@ -391,8 +392,8 @@ scan_header_line (dynHashTab *dht, FILE *tsvp, int insertall, char *buffer, long
     headercols = num_columns (buffer, linelen);
 
     #ifdef DEBUG
-        Rprintf ("> scan_header_line: headercols=%ld, rowcols=%d, headerlen=%ld\n",
-	         headercols, rowcols, linelen);
+        Rprintf ("> scan_header_line: headercols=%ld, rowcols=%d, headerlen=%ld, rowlen=%ld, buffersize=%ld\n",
+	         headercols, rowcols, linelen, rowlen, buffersize);
     #endif
 
     numpats = 0;
