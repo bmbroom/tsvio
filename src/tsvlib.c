@@ -30,6 +30,32 @@
 /* Size of per line input buffer. */
 #define LINEBUFFERSIZE	(10*1024*1024)
 
+SEXP tsvGenIndex (SEXP dataFile, SEXP indexFile);
+SEXP tsvGetLines (SEXP dataFile, SEXP indexFile, SEXP patterns, SEXP findany);
+SEXP tsvGetData (SEXP dataFile, SEXP indexFile, SEXP rowpatterns, SEXP colpatterns, SEXP dtype, SEXP findany);
+
+/* Allocate resources needed by the package.
+ */
+void
+R_init_tsvio (DllInfo *info)
+{
+    static const R_CallMethodDef callMethods[] = {
+	{ "tsvGenIndex", (DL_FUNC) &tsvGenIndex, 2 },
+	{ "tsvGetLines", (DL_FUNC) &tsvGetLines, 4 },
+	{ "tsvGetData",  (DL_FUNC) &tsvGetData,  6 },
+	{ NULL, NULL, 0 }
+    };
+    R_registerRoutines (info, NULL, callMethods, NULL, NULL);
+    R_useDynamicSymbols (info, FALSE);
+}
+
+/* Release resources used by the package.
+ */
+void
+R_unload_tsvio (DllInfo *info)
+{
+}
+
 static SEXP
 add_dims (SEXP svec, long nrows, long ncols)
 {
