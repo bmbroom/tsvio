@@ -19,7 +19,8 @@ tsvGetData(
 \item{indexfile}{The name (and path) of the file to which the index will be written.}
 
 \item{rowpatterns}{A vector of strings containing the string to match against the index entries.  Only
-lines with keys that exactly match at least one pattern string are returned.}
+lines with keys that exactly match at least one pattern string are returned.  If rowpatterns is NULL,
+data from all rows is returned.}
 
 \item{colpatterns}{A vector of strings to match against the column headers in the first row}
 

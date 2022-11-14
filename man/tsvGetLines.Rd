@@ -17,7 +17,8 @@ lines with keys that exactly match at least one pattern string are returned.}
 \item{findany}{If false, all patterns must be matched. If true (default) at least one pattern must match.}
 }
 \value{
-A matrix containing one row for each matched line.  Columns are described by the header line.
+A string vector whose first element is the first line from data file. Subsequent elements of the
+        vector are lines from the data file whose labels match an entry in patterns.
 }
 \description{
 This function reads lines that match the given patterns from a TSV file with the assistance of

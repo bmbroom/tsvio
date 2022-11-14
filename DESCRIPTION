@@ -10,6 +10,10 @@ Authors@R:
     person(given="MD Anderson Cancer Center", role=c("cph")))
 Depends:
     R (>= 3.4.0)
+Suggests:
+    testthat (>= 3.0.0),
+    knitr,
+    rmarkdown
 Description: Provides simple functions for processing data files in
     tab-separated value (TSV) format.
 License: GPL (>= 3)
@@ -20,4 +24,6 @@ NeedsCompilation: yes
 LazyLoad: Yes
 Collate:
     'interface.R'
+Config/testthat/edition: 3
+VignetteBuilder: knitr
 RoxygenNote: 7.2.1
