@@ -1,17 +1,29 @@
 Package: tsvio
 Title: Simple Utilities for Tab-Separated-Value (TSV) Files
-Version: 0.0.13.9006
-Date: 2021-05-31
-Author: Bradley Broom
-Maintainer: Bradley Broom <bmbroom@mdanderson.org>
+Version: 0.0.14
+Date: 2022-11-11
+Authors@R:
+  c(person(given=c("Bradley", "M"), family="Broom", role=c("aut","cre"), email="bmbroom@mdanderson.org", comment=c(ORCID="0000-0002-0915-3164")),
+    person(given=c("Mary", "A"), family="Rohrdanz", role=c("ctb"), email="marohrdanz@mdanderson.org"),
+    person(given="Chris", family="Wakefield", role=c("ctb"), email="cwakefield@mdanderson.org"),
+    person(given="James", family="Melott", role=c("ctb"), email="jmmelott@mdanderson.org"),
+    person(given="MD Anderson Cancer Center", role=c("cph")))
 Depends:
-    R (>= 2.14.0)
+    R (>= 3.4.0)
+Suggests:
+    testthat (>= 3.0.0),
+    knitr,
+    rmarkdown
 Description: Provides simple functions for processing data files in
     tab-separated value (TSV) format.
 License: GPL (>= 3)
 Copyright: file COPYRIGHTS
-URL: http://bioinformatics.mdanderson.org/people/Bradley.Broom/
+Encoding: UTF-8
+URL: http://bioinformatics.mdanderson.org/faculty/bradley-broom/
 NeedsCompilation: yes
 LazyLoad: Yes
 Collate:
     'interface.R'
+Config/testthat/edition: 3
+VignetteBuilder: knitr
+RoxygenNote: 7.2.1

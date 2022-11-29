@@ -1,7 +1,19 @@
+#' Simple Utilities for Tab Separated Value (TSV) Files
+#'
+#' Utilities for indexing and rapidly loading (subsets of) data from (large) tab separated value (TSV) files.
+#' The TSV files are required to have a unique row label in the first column of each line and a unique
+#' column label in the first line of the file.
+#' Files may be formatted in either spreadsheet/Unix format (same number of fields on each line) or R format
+#' (one less column on the first line only).
+#' The data matrix in the files are expected to have the same data types in all entries.  (The row and column
+#' labels are always expected to be strings.)
+#'
 #' @name tsvio-package
-#' @title tsvio: Simple utilities for Tab Separated Value (TSV) files
+#' @title tsvio: Simple Utilities for Tab Separated Value (TSV) Files
 #' @docType package
 #' @useDynLib tsvio
+#'
+#' @seealso tsvGenIndex, tsvGetLines, tsvGetData
 NULL
 
 #' Produce a simple index of a tsv file.
@@ -19,14 +31,15 @@ NULL
 #' @export
 #'
 #' @examples
-#'\dontrun{
-#' tsvGenIndex ("data.tsv", "index.tsv")
-#'}
+#' datafile = tempfile("data");
+#' writeLines(c("C1\tC2", "R1\tFoo\tBar", "R2\tBoing\tBoing", "R3\tThe\tEnd"), file(datafile));
+#' indexfile = tempfile("index");
+#' tsvGenIndex (datafile, indexfile)
 #'
-#' @seealso tsvGetLines
+#' @seealso tsvGetLines, tsvGetData
 tsvGenIndex <- function (filename, indexfile) {
     return (.Call  ("tsvGenIndex", filename, indexfile));
-}
+};
 
 #' Read matching lines from a tsv file, using a pre-computed index file.
 #'
@@ -45,19 +58,22 @@ tsvGenIndex <- function (filename, indexfile) {
 #'
 #' @param findany If false, all patterns must be matched. If true (default) at least one pattern must match.
 #'
-#' @return A matrix containing one row for each matched line.  Columns are described by the header line.
+#' @return A string vector whose first element is the first line from data file. Subsequent elements of the
+#'         vector are lines from the data file whose labels match an entry in patterns.
 #'
 #' @export
 #'
 #' @examples
-#'\dontrun{
-#' tab <- tsvGetLines ("data.tsv", "index.tsv", c("pattern1", "pattern2"))
-#'}
+#' datafile = tempfile("data");
+#' writeLines(c("C1\tC2", "R1\tFoo\tBar", "R2\tBoing\tBoing", "R3\tThe\tEnd"), file(datafile));
+#' indexfile = tempfile("index");
+#' tsvGenIndex (datafile, indexfile);
+#' tsvGetLines (datafile, indexfile, c("R1", "R3"))
 #'
-#' @seealso tsvGenIndex
+#' @seealso tsvGenIndex, tscGetData
 tsvGetLines <- function (filename, indexfile, patterns, findany=TRUE) {
     .Call("tsvGetLines", filename, indexfile, patterns, findany)
-}
+};
 
 #' Read matching lines from a tsv file, using a pre-computed index file.
 #'
@@ -72,7 +88,9 @@ tsvGetLines <- function (filename, indexfile, patterns, findany=TRUE) {
 #' @param indexfile The name (and path) of the file to which the index will be written.
 #'
 #' @param rowpatterns A vector of strings containing the string to match against the index entries.  Only
-#' lines with keys that exactly match at least one pattern string are returned.
+#' lines with keys that exactly match at least one pattern string are returned.  If rowpatterns is NULL,
+#' data from all rows is returned.
+#'
 #' @param colpatterns A vector of strings to match against the column headers in the first row
 #'
 #' @param dtype A prototype element that specifies by example the type of matrix to return.  The
@@ -85,11 +103,13 @@ tsvGetLines <- function (filename, indexfile, patterns, findany=TRUE) {
 #' @export
 #'
 #' @examples
-#'\dontrun{
-#' tab <- tsvGetData ("data.tsv", "index.tsv", c("pattern1", "pattern2"), c('cpat1'))
-#'}
+#' datafile = tempfile("data");
+#' writeLines(c("x\tC1\tC2", "R1\tFoo\tBar", "R2\tBoing\tBoing", "R3\tThe\tEnd"), file(datafile));
+#' indexfile = tempfile("index");
+#' tsvGenIndex (datafile, indexfile);
+#' tsvGetData (datafile, indexfile, c("R1", "R3"), c('C2'))
 #'
-#' @seealso tsvGenIndex
+#' @seealso tsvGenIndex, tsvGetLines
 tsvGetData <- function (filename, indexfile, rowpatterns, colpatterns, dtype="", findany=TRUE) {
     .Call("tsvGetData", filename, indexfile, rowpatterns, colpatterns, dtype, findany)
-}
+};
