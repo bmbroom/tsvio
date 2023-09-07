@@ -4,6 +4,27 @@
 
 #include <R.h>
 
+
+#ifdef _WIN32
+/* strndup is not part of the standard C library
+   On POSIX systems, it is declared in string.h
+   On Windows systems, it doesn't seem to be declared anywhere.
+*/
+char *strndup(const char *s, size_t n) {
+    char *p;
+    size_t n1;
+
+    for (n1 = 0; n1 < n && s[n1] != '\0'; n1++)
+        continue;
+    p = malloc(n + 1);
+    if (p != NULL) {
+        memcpy(p, s, n1);
+        p[n1] = '\0';
+    }
+    return p;
+}
+#endif
+
 /* #### #### #### #### #### #### ####
  * #### #### #### #### #### #### ####
  *
@@ -204,15 +225,7 @@ hashTabOp (dynHashTab *dht, const char *str, long len, long value, long flags)
 
     /* Put new entry into empty slot and increment number of entries. */
     dht->slot[idx].order = dht->count++;
-#ifdef _WIN32
-    if (dht->flags & DHT_STRDUP) {
-        if ((dht->slot[idx].str = malloc (len)) != NULL)
-            memcpy (dht->slot[idx].str, str, len);
-    } else
-        dht->slot[idx].str = str;
-#else
     dht->slot[idx].str = dht->flags & DHT_STRDUP ? strndup (str, len) : str;
-#endif
     dht->slot[idx].len = len;
     dht->slot[idx].value = value;
 
