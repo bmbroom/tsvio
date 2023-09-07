@@ -32,7 +32,8 @@ NULL
 #'
 #' @examples
 #' datafile = tempfile("data");
-#' df <- data.frame(C1 = c("Foo", "Boing", "The"), C2 = c("Bar", "Boing", "End"), row.names = c("R1", "R2", "R3"));
+#' df <- data.frame(C1 = c("Foo", "Boing", "The"), C2 = c("Bar", "Boing", "End"));
+#' rownames(df) <- c("R1", "R2", "R3");
 #' write.table(df, file=datafile, sep="\t", quote=FALSE, row.names=TRUE, col.names=TRUE);
 #' indexfile = tempfile("index");
 #' tsvGenIndex (datafile, indexfile)
@@ -66,7 +67,8 @@ tsvGenIndex <- function (filename, indexfile) {
 #'
 #' @examples
 #' datafile = tempfile("data");
-#' df <- data.frame(C1 = c("Foo", "Boing", "The"), C2 = c("Bar", "Boing", "End"), row.names = c("R1", "R2", "R3"));
+#' df <- data.frame(C1 = c("Foo", "Boing", "The"), C2 = c("Bar", "Boing", "End"));
+#' rownames(df) <- c("R1", "R2", "R3");
 #' write.table(df, file=datafile, sep="\t", quote=FALSE, row.names=TRUE, col.names=TRUE);
 #' indexfile = tempfile("index");
 #' tsvGenIndex (datafile, indexfile);
@@ -106,7 +108,8 @@ tsvGetLines <- function (filename, indexfile, patterns, findany=TRUE) {
 #'
 #' @examples
 #' datafile = tempfile("data");
-#' df <- data.frame(C1 = c("Foo", "Boing", "The"), C2 = c("Bar", "Boing", "End"), row.names = c("R1", "R2", "R3"));
+#' df <- data.frame(C1 = c("Foo", "Boing", "The"), C2 = c("Bar", "Boing", "End"));
+#' rownames(df) <- c("R1", "R2", "R3");
 #' write.table(df, file=datafile, sep="\t", quote=FALSE, row.names=TRUE, col.names=TRUE);
 #' indexfile = tempfile("index");
 #' tsvGenIndex (datafile, indexfile);
