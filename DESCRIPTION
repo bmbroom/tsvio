@@ -1,6 +1,6 @@
 Package: tsvio
 Title: Simple Utilities for Tab-Separated-Value (TSV) Files
-Version: 0.0.14
+Version: 1.0.0
 Date: 2022-11-11
 Authors@R:
   c(person(given=c("Bradley", "M"), family="Broom", role=c("aut"), email="bmbroom@mdanderson.org", comment=c(ORCID="0000-0002-0915-3164")),
