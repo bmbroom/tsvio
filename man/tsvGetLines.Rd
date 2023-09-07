@@ -30,7 +30,8 @@ since the index file was created.
 }
 \examples{
 datafile = tempfile("data");
-writeLines(c("C1\tC2", "R1\tFoo\tBar", "R2\tBoing\tBoing", "R3\tThe\tEnd"), file(datafile));
+df <- data.frame(C1 = c("Foo", "Boing", "The"), C2 = c("Bar", "Boing", "End"), row.names = c("R1", "R2", "R3"));
+write.table(df, file=datafile, sep="\t", quote=FALSE, row.names=TRUE, col.names=TRUE);
 indexfile = tempfile("index");
 tsvGenIndex (datafile, indexfile);
 tsvGetLines (datafile, indexfile, c("R1", "R3"))
