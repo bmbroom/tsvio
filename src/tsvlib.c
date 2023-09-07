@@ -144,7 +144,7 @@ get_tsv_line_buffer (char *buffer, size_t bufsize, FILE *tsvp, long posn)
 	error ("get_tsv_line: error seeking to line starting at %ld\n", posn);
 
     len = 0;
-    while ((ch = getc (tsvp)) != EOF && ch != '\n') {
+    while ((ch = getc (tsvp)) != EOF && ch != '\n' && ch != '\r') {
 	if (len >= (bufsize-1)) {
 	    error ("get_tsv_line: line starting at %ld longer than buffer length (%d bytes)\n", posn, bufsize);
 	}
@@ -155,6 +155,9 @@ get_tsv_line_buffer (char *buffer, size_t bufsize, FILE *tsvp, long posn)
 	warning ("get_tsv_line: line starting at %ld is prematurely terminated by EOF\n", posn);
     }
 	
+#ifdef _WIN32
+    buffer[len++] = '\r'; /* Add CR to end of line. */
+#endif
     buffer[len++] = '\n'; /* Check above ensures space for this. */
 #ifdef DEBUG
     Rprintf ("< get_tsv_line_buffer (len=%d)\n", len);
@@ -362,7 +365,7 @@ get_tsv_fields (SEXP result,	     /* Destination R 'matrix' */
 
     indexp = 0;
     /* Advance over first column (row header) and its terminator. */
-    while ((indexp < linelen) && buffer[indexp] != '\t' && buffer[indexp] != '\n') {
+    while ((indexp < linelen) && buffer[indexp] != '\t' && buffer[indexp] != '\n' && buffer[indexp] != '\r') {
 	indexp++;
     }
     if (indexp < linelen) indexp++; /* Advance over field-terminator, if any. */
@@ -374,7 +377,7 @@ get_tsv_fields (SEXP result,	     /* Destination R 'matrix' */
 
 	/* Read field. */
 	fstart = indexp;
-	while ((indexp < linelen) && buffer[indexp] != '\t' && buffer[indexp] != '\n') {
+	while ((indexp < linelen) && buffer[indexp] != '\t' && buffer[indexp] != '\n' && buffer[indexp] != '\r') {
 	    indexp++;
 	}
 
@@ -426,11 +429,11 @@ scan_header_line (dynHashTab *dht, FILE *tsvp, int insertall, char *buffer, long
     indexp = 0;
     /* Assert: numpats fields have been inserted into the dht this call. */
     /* Assert: indexp is positioned at start of a field or immediately following buffer contents. */
-    while (indexp < linelen) {
+    while (indexp < linelen - 1) {
 
 	/* Read field (aka pattern). */
 	fstart = indexp;
-	while ((indexp < linelen) && buffer[indexp] != '\t' && buffer[indexp] != '\n') {
+	while ((indexp < linelen) && buffer[indexp] != '\t' && buffer[indexp] != '\n' && buffer[indexp] != '\r') {
 	    indexp++;
 	}
 
@@ -476,7 +479,7 @@ autoRowPatterns (FILE *indexfile)
     while (fgets (buffer, LINEBUFFERSIZE, indexfile)) {
 	linelen = strlen (buffer);
 	indexp = 0;
-	while ((indexp < linelen) && buffer[indexp] != '\t' && buffer[indexp] != '\n') {
+	while ((indexp < linelen) && buffer[indexp] != '\t' && buffer[indexp] != '\n' && buffer[indexp] != '\r') {
 	    indexp++;
 	}
 	element = mkCharLen(buffer, indexp);
